@@ -127,12 +127,13 @@ impl ApplicationHandler for App {
                     KeyEvent {
                         physical_key: PhysicalKey::Code(key_code),
                         state,
+                        repeat,
                         ..
                     },
                 ..
             } => {
                 if let Some(key) = keyboard::KeyboardKey::from_key_code(key_code) {
-                    let keyboard_input = keyboard::KeyboardInput::new(key, &state);
+                    let keyboard_input = keyboard::KeyboardInput::new(key, &state, repeat);
                     self.game.process_keyboard(keyboard_input);
                 }
             }
