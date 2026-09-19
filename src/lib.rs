@@ -9,6 +9,7 @@ use renderer::*;
 use sound::SoundSystem;
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use winit::{
     application::ApplicationHandler,
@@ -26,8 +27,10 @@ pub trait Game {
         sound_system: &SoundSystem,
         window_size: (f32, f32),
     );
+    /// `dt` is the time since the previous update in seconds, capped at `MAX_DELTA_TIME`.
     fn update(
         &mut self,
+        dt: f32,
         geometry: &mut Geometry,
         text_renderer: &mut TextRenderer,
         sound_system: &SoundSystem,
@@ -36,6 +39,10 @@ pub trait Game {
     fn is_quitting(&self) -> bool;
     fn focus_changed(&mut self, focus: bool);
 }
+
+/// Longest frame time handed to `Game::update`. Below 20 fps the game slows down
+/// instead of taking one large step.
+pub const MAX_DELTA_TIME: f32 = 0.05;
 
 pub fn start(title: &str, game: Box<dyn Game>) {
     env_logger::init();
@@ -63,6 +70,7 @@ struct Running {
     geometry: Geometry,
     text_renderer: TextRenderer,
     sound_system: SoundSystem,
+    last_update: Instant,
 }
 
 impl ApplicationHandler for App {
@@ -97,6 +105,7 @@ impl ApplicationHandler for App {
             geometry,
             text_renderer,
             sound_system,
+            last_update: Instant::now(),
         });
     }
 
@@ -113,7 +122,14 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::RedrawRequested => {
+                let now = Instant::now();
+                let dt = (now - running.last_update)
+                    .as_secs_f32()
+                    .min(MAX_DELTA_TIME);
+                running.last_update = now;
+
                 self.game.update(
+                    dt,
                     &mut running.geometry,
                     &mut running.text_renderer,
                     &running.sound_system,
