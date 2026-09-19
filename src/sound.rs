@@ -1,4 +1,10 @@
+/// Plays sounds on the default output device. When there is no output device,
+/// every sound is silently dropped instead.
 pub struct SoundSystem {
+    output: Option<Output>,
+}
+
+struct Output {
     #[allow(dead_code)]
     device: rodio::Device,
     sink: rodio::Sink,
@@ -7,18 +13,31 @@ pub struct SoundSystem {
 
 impl SoundSystem {
     pub fn new() -> Self {
-        let device = rodio::default_output_device().unwrap();
-        let sink = rodio::Sink::new(&device);
-        sink.set_volume(0.5);
+        let output = match rodio::default_output_device() {
+            Some(device) => {
+                let sink = rodio::Sink::new(&device);
+                sink.set_volume(0.5);
 
-        let spatial_sink =
-            rodio::SpatialSink::new(&device, [0.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]);
+                let spatial_sink = rodio::SpatialSink::new(
+                    &device,
+                    [0.0, 0.0, 0.0],
+                    [-1.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                );
 
-        Self {
-            device,
-            sink,
-            spatial_sink,
-        }
+                Some(Output {
+                    device,
+                    sink,
+                    spatial_sink,
+                })
+            }
+            None => {
+                log::warn!("No audio output device found, sound is disabled");
+                None
+            }
+        };
+
+        Self { output }
     }
 
     #[inline]
@@ -28,7 +47,9 @@ impl SoundSystem {
         S::Item: rodio::Sample,
         S::Item: Send,
     {
-        self.sink.append(sound);
+        if let Some(output) = &self.output {
+            output.sink.append(sound);
+        }
     }
 
     #[allow(dead_code)]
@@ -38,7 +59,9 @@ impl SoundSystem {
         S: rodio::Source + Send + 'static,
         S::Item: rodio::Sample + Send + std::fmt::Debug,
     {
-        self.spatial_sink.set_emitter_position(position);
-        self.spatial_sink.append(sound);
+        if let Some(output) = &self.output {
+            output.spatial_sink.set_emitter_position(position);
+            output.spatial_sink.append(sound);
+        }
     }
 }
