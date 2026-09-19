@@ -1,38 +1,43 @@
-/// Plays sounds on the default output device. When there is no output device,
-/// every sound is silently dropped instead.
+/// Plays sounds on the default output device. When no output device can be
+/// opened, every sound is silently dropped instead.
 pub struct SoundSystem {
     output: Option<Output>,
 }
 
 struct Output {
-    #[allow(dead_code)]
-    device: rodio::Device,
-    sink: rodio::Sink,
-    spatial_sink: rodio::SpatialSink,
+    player: rodio::Player,
+    spatial_player: rodio::SpatialPlayer,
+    // Playback stops when this is dropped, so it lives as long as the players.
+    _sink: rodio::MixerDeviceSink,
 }
 
 impl SoundSystem {
     pub fn new() -> Self {
-        let output = match rodio::default_output_device() {
-            Some(device) => {
-                let sink = rodio::Sink::new(&device);
-                sink.set_volume(0.5);
+        let output = match rodio::DeviceSinkBuilder::open_default_sink() {
+            Ok(mut sink) => {
+                sink.log_on_drop(false);
 
-                let spatial_sink = rodio::SpatialSink::new(
-                    &device,
+                let player = rodio::Player::connect_new(sink.mixer());
+                player.set_volume(0.5);
+
+                let spatial_player = rodio::SpatialPlayer::connect_new(
+                    sink.mixer(),
                     [0.0, 0.0, 0.0],
                     [-1.0, 0.0, 0.0],
                     [1.0, 0.0, 0.0],
                 );
 
                 Some(Output {
-                    device,
-                    sink,
-                    spatial_sink,
+                    player,
+                    spatial_player,
+                    _sink: sink,
                 })
             }
-            None => {
-                log::warn!("No audio output device found, sound is disabled");
+            Err(e) => {
+                log::warn!(
+                    "Could not open an audio output device, sound is disabled: {}",
+                    e
+                );
                 None
             }
         };
@@ -44,11 +49,9 @@ impl SoundSystem {
     pub fn queue<S>(&self, sound: S)
     where
         S: rodio::Source + Send + 'static,
-        S::Item: rodio::Sample,
-        S::Item: Send,
     {
         if let Some(output) = &self.output {
-            output.sink.append(sound);
+            output.player.append(sound);
         }
     }
 
@@ -57,11 +60,10 @@ impl SoundSystem {
     pub fn queue_spatial<S>(&self, sound: S, position: [f32; 3])
     where
         S: rodio::Source + Send + 'static,
-        S::Item: rodio::Sample + Send + std::fmt::Debug,
     {
         if let Some(output) = &self.output {
-            output.spatial_sink.set_emitter_position(position);
-            output.spatial_sink.append(sound);
+            output.spatial_player.set_emitter_position(position);
+            output.spatial_player.append(sound);
         }
     }
 }

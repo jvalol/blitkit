@@ -16,4 +16,4 @@ wgpu = "30"
 wgpu_text = "30"
 pollster = "1"
 bytemuck = "1.4"
-rodio = "0.11"
+rodio = { version = "0.22", default-features = false, features = ["playback"] }
