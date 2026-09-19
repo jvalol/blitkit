@@ -4,265 +4,287 @@ use crate::geometry::vertex::*;
 use crate::geometry::Geometry;
 use render_text::*;
 
-use std::iter;
+use std::sync::Arc;
 
-use wgpu_glyph::{ab_glyph, Section, Text};
+use wgpu::util::DeviceExt;
+use wgpu_text::glyph_brush::ab_glyph::FontRef;
+use wgpu_text::glyph_brush::{HorizontalAlign, Layout, Section, Text};
+use wgpu_text::{BrushBuilder, TextBrush};
 use winit::window::Window;
 
 const FONT_BYTES: &[u8] = include_bytes!("../../res/fonts/PressStart2P-Regular.ttf");
 
 pub struct Renderer {
-    surface: wgpu::Surface,
+    surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    sc_desc: wgpu::SwapChainDescriptor,
-    swap_chain: wgpu::SwapChain,
-    size: winit::dpi::PhysicalSize<u32>,
+    config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    glyph_brush: wgpu_glyph::GlyphBrush<()>,
-    staging_belt: wgpu::util::StagingBelt,
+    text_brush: TextBrush<FontRef<'static>>,
 }
 
 impl Renderer {
     pub fn width(&self) -> f32 {
-        self.sc_desc.width as f32
+        self.config.width as f32
     }
 
-    #[allow(dead_code)]
     pub fn height(&self) -> f32 {
-        self.sc_desc.height as f32
+        self.config.height as f32
     }
 
-    pub async fn new(window: &Window) -> Self {
+    pub async fn new(window: Arc<Window>, instance_desc: wgpu::InstanceDescriptor) -> Self {
         let size = window.inner_size();
 
-        // The instance is a handle to our GPU
-        // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
-        let surface = unsafe { instance.create_surface(window) };
+        let instance = wgpu::Instance::new(instance_desc);
+        let surface = instance.create_surface(window).unwrap();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::Default,
                 compatible_surface: Some(&surface),
+                ..Default::default()
             })
             .await
             .unwrap();
 
         let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
-                    shader_validation: true,
-                },
-                None, // Trace path
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("Device"),
+                ..Default::default()
+            })
             .await
             .unwrap();
 
-        let sc_desc = wgpu::SwapChainDescriptor {
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            width: size.width,
-            height: size.height,
+        let capabilities = surface.get_capabilities(&adapter);
+        let format = capabilities
+            .formats
+            .iter()
+            .copied()
+            .find(|format| format.is_srgb())
+            .unwrap_or(capabilities.formats[0]);
+        let config = wgpu::SurfaceConfiguration {
+            format,
             present_mode: wgpu::PresentMode::Fifo,
+            ..surface
+                .get_default_config(&adapter, size.width.max(1), size.height.max(1))
+                .unwrap()
         };
-        let swap_chain = device.create_swap_chain(&surface, &sc_desc);
+        surface.configure(&device, &config);
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            bind_group_layouts: &[],
-            push_constant_ranges: &[],
-            label: Some("Pipeline Layout"),
-        });
-        let pipeline = create_render_pipeline(
+        let pipeline = create_render_pipeline(&device, config.format);
+
+        let vertex_buffer = create_buffer(&device, 0, wgpu::BufferUsages::VERTEX);
+        let index_buffer = create_buffer(&device, 0, wgpu::BufferUsages::INDEX);
+
+        let text_brush = BrushBuilder::using_font_bytes(FONT_BYTES).unwrap().build(
             &device,
-            &pipeline_layout,
-            sc_desc.format,
-            &[Vertex::DESC],
-            wgpu::include_spirv!("../../res/shaders/textured.vert.spv"),
-            wgpu::include_spirv!("../../res/shaders/textured.frag.spv"),
+            config.width,
+            config.height,
+            config.format,
         );
-
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: 0,
-            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: 0,
-            usage: wgpu::BufferUsage::INDEX | wgpu::BufferUsage::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let font = ab_glyph::FontArc::try_from_slice(FONT_BYTES).unwrap();
-        let glyph_brush =
-            wgpu_glyph::GlyphBrushBuilder::using_font(font).build(&device, sc_desc.format);
-        let staging_belt = wgpu::util::StagingBelt::new(1024);
 
         Self {
             surface,
             device,
             queue,
-            sc_desc,
-            swap_chain,
-            size,
+            config,
             pipeline,
             vertex_buffer,
             index_buffer,
-            glyph_brush,
-            staging_belt,
+            text_brush,
         }
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.size = new_size;
-        self.sc_desc.width = new_size.width;
-        self.sc_desc.height = new_size.height;
-        self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
+        // A minimized window reports a zero size, which a surface cannot be configured with.
+        if new_size.width == 0 || new_size.height == 0 {
+            return;
+        }
+        self.config.width = new_size.width;
+        self.config.height = new_size.height;
+        self.surface.configure(&self.device, &self.config);
+        self.text_brush
+            .resize_view(self.width(), self.height(), &self.queue);
     }
 
     pub fn render(&mut self, geometry: &Geometry, text_renderer: &TextRenderer) {
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                self.surface.configure(&self.device, &self.config);
+                frame
+            }
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(&self.device, &self.config);
+                return;
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
+            other => {
+                log::error!("Failed to acquire surface texture: {:?}", other);
+                return;
+            }
+        };
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        self.upload_geometry(geometry);
+
+        let sections: Vec<Section> = text_renderer
+            .render_texts
+            .iter()
+            .map(text_section)
+            .collect();
+        if let Err(e) = self.text_brush.queue(&self.device, &self.queue, sections) {
+            log::error!("Failed to queue text: {}", e);
+        }
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Renderer Encoder"),
             });
 
-        self.vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: Vertex::SIZE * 4 * (geometry.num_quads as u64),
-            usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
-            mapped_at_creation: false,
-        });
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
 
-        self.index_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: None,
-            size: U32_SIZE * 6 * (geometry.num_quads as u64),
-            usage: wgpu::BufferUsage::INDEX | wgpu::BufferUsage::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let (stg_vertex, stg_index, num_indices) = geometry.build(&self.device);
-
-        stg_vertex.copy_to_buffer(&mut encoder, &self.vertex_buffer);
-        stg_index.copy_to_buffer(&mut encoder, &self.index_buffer);
-
-        match self.swap_chain.get_current_frame() {
-            Ok(frame) => {
-                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                        attachment: &frame.output.view,
-                        resolve_target: None,
-                        ops: wgpu::Operations::default(),
-                    }],
-                    depth_stencil_attachment: None,
-                });
-
-                if num_indices != 0 {
-                    render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(self.index_buffer.slice(..));
-                    render_pass.set_pipeline(&self.pipeline);
-                    render_pass.draw_indexed(0..num_indices, 0, 0..1);
-                }
-
-                drop(render_pass);
-
-                for render_text in text_renderer.render_texts.iter() {
-                    draw_text(render_text, &mut self.glyph_brush);
-                }
-
-                self.glyph_brush
-                    .draw_queued(
-                        &self.device,
-                        &mut self.staging_belt,
-                        &mut encoder,
-                        &frame.output.view,
-                        self.sc_desc.width,
-                        self.sc_desc.height,
-                    )
-                    .unwrap();
-
-                self.staging_belt.finish();
-
-                self.queue.submit(iter::once(encoder.finish()));
+            let num_indices = geometry.index_data().len() as u32;
+            if num_indices != 0 {
+                render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                render_pass
+                    .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..num_indices, 0, 0..1);
             }
-            Err(wgpu::SwapChainError::Outdated) => {
-                self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
-            }
-            Err(e) => {
-                eprintln!("Error: {}", e);
-            }
+
+            self.text_brush.draw(&mut render_pass);
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        self.queue.present(frame);
+    }
+
+    /// Writes this frame's quads into the vertex and index buffers, growing them when they are too small.
+    fn upload_geometry(&mut self, geometry: &Geometry) {
+        let vertices: &[u8] = bytemuck::cast_slice(geometry.vertex_data());
+        let indices: &[u8] = bytemuck::cast_slice(geometry.index_data());
+
+        if vertices.len() as u64 > self.vertex_buffer.size() {
+            self.vertex_buffer =
+                create_buffer_init(&self.device, vertices, wgpu::BufferUsages::VERTEX);
+        } else if !vertices.is_empty() {
+            self.queue.write_buffer(&self.vertex_buffer, 0, vertices);
+        }
+
+        if indices.len() as u64 > self.index_buffer.size() {
+            self.index_buffer =
+                create_buffer_init(&self.device, indices, wgpu::BufferUsages::INDEX);
+        } else if !indices.is_empty() {
+            self.queue.write_buffer(&self.index_buffer, 0, indices);
         }
     }
 }
 
+fn create_buffer(
+    device: &wgpu::Device,
+    size: wgpu::BufferAddress,
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size,
+        usage: usage | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+fn create_buffer_init(
+    device: &wgpu::Device,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: None,
+        contents,
+        usage: usage | wgpu::BufferUsages::COPY_DST,
+    })
+}
+
 fn create_render_pipeline(
     device: &wgpu::Device,
-    layout: &wgpu::PipelineLayout,
     color_format: wgpu::TextureFormat,
-    vertex_descs: &[wgpu::VertexBufferDescriptor],
-    vs_src: wgpu::ShaderModuleSource,
-    fs_src: wgpu::ShaderModuleSource,
 ) -> wgpu::RenderPipeline {
-    let vs_module = device.create_shader_module(vs_src);
-    let fs_module = device.create_shader_module(fs_src);
+    let shader = device.create_shader_module(wgpu::include_wgsl!("../../res/shaders/quad.wgsl"));
+
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Pipeline Layout"),
+        bind_group_layouts: &[],
+        immediate_size: 0,
+    });
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
         layout: Some(&layout),
-        vertex_stage: wgpu::ProgrammableStageDescriptor {
-            module: &vs_module,
-            entry_point: "main",
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[Some(Vertex::DESC)],
+            compilation_options: Default::default(),
         },
-        fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-            module: &fs_module,
-            entry_point: "main",
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: color_format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
         }),
-        rasterization_state: None,
-        primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-        color_states: &[wgpu::ColorStateDescriptor {
-            format: color_format,
-            color_blend: wgpu::BlendDescriptor::REPLACE,
-            alpha_blend: wgpu::BlendDescriptor::REPLACE,
-            write_mask: wgpu::ColorWrite::ALL,
-        }],
-        depth_stencil_state: None,
-        sample_count: 1,
-        sample_mask: !0,
-        alpha_to_coverage_enabled: false,
-        vertex_state: wgpu::VertexStateDescriptor {
-            index_format: wgpu::IndexFormat::Uint32,
-            vertex_buffers: vertex_descs,
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
         },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
     })
 }
 
-fn draw_text(text: &RenderText, glyph_brush: &mut wgpu_glyph::GlyphBrush<()>) {
-    let layout = wgpu_glyph::Layout::default().h_align(if text.centered {
-        wgpu_glyph::HorizontalAlign::Center
+fn text_section(text: &RenderText) -> Section<'_> {
+    let layout = Layout::default().h_align(if text.centered {
+        HorizontalAlign::Center
     } else {
-        wgpu_glyph::HorizontalAlign::Left
+        HorizontalAlign::Left
     });
 
-    let section =
-        Section {
-            screen_position: text.position.into(),
-            bounds: text.bounds.into(),
-            layout,
-            ..Section::default()
-        }
-        .add_text(Text::new(&text.text).with_color(text.color).with_scale(
-            if text.focused {
-                text.size + 8.0
-            } else {
-                text.size
-            },
-        ));
-
-    glyph_brush.queue(section);
+    Section::default()
+        .with_screen_position((text.position.x, text.position.y))
+        .with_bounds((text.bounds.x, text.bounds.y))
+        .with_layout(layout)
+        .add_text(
+            Text::new(&text.text)
+                .with_color(text.color)
+                .with_scale(if text.focused {
+                    text.size + 8.0
+                } else {
+                    text.size
+                }),
+        )
 }

@@ -1,6 +1,3 @@
-use crate::util::size_of_slice;
-
-use wgpu::util::{BufferInitDescriptor, DeviceExt};
 pub mod quad;
 pub mod vertex;
 use quad::Quad;
@@ -57,33 +54,11 @@ impl Geometry {
         self.num_quads += 1;
     }
 
-    pub fn build(&self, device: &wgpu::Device) -> (StagingBuffer, StagingBuffer, u32) {
-        (
-            StagingBuffer::new(device, &self.vertex_data),
-            StagingBuffer::new(device, &self.index_data),
-            self.index_data.len() as u32,
-        )
-    }
-}
-
-pub struct StagingBuffer {
-    buffer: wgpu::Buffer,
-    size: wgpu::BufferAddress,
-}
-
-impl StagingBuffer {
-    pub fn new<T: bytemuck::Pod + Sized>(device: &wgpu::Device, data: &[T]) -> StagingBuffer {
-        StagingBuffer {
-            buffer: device.create_buffer_init(&BufferInitDescriptor {
-                contents: bytemuck::cast_slice(data),
-                usage: wgpu::BufferUsage::COPY_SRC,
-                label: Some("Staging Buffer"),
-            }),
-            size: size_of_slice(data) as wgpu::BufferAddress,
-        }
+    pub(crate) fn vertex_data(&self) -> &[vertex::Vertex] {
+        &self.vertex_data
     }
 
-    pub fn copy_to_buffer(self, encoder: &mut wgpu::CommandEncoder, other: &wgpu::Buffer) {
-        encoder.copy_buffer_to_buffer(&self.buffer, 0, other, 0, self.size)
+    pub(crate) fn index_data(&self) -> &[u32] {
+        &self.index_data
     }
 }
