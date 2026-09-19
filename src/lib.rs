@@ -38,6 +38,10 @@ pub trait Game {
     fn process_keyboard(&mut self, input: keyboard::KeyboardInput);
     fn is_quitting(&self) -> bool;
     fn focus_changed(&mut self, focus: bool);
+    /// Called after the window changes size, with the new size in physical pixels.
+    /// Not called while the window is minimized.
+    #[allow(unused_variables)]
+    fn resized(&mut self, window_size: (f32, f32)) {}
 }
 
 /// Longest frame time handed to `Game::update`. Below 20 fps the game slows down
@@ -155,7 +159,11 @@ impl ApplicationHandler for App {
             }
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(physical_size) => {
-                running.renderer.resize(physical_size);
+                if physical_size.width > 0 && physical_size.height > 0 {
+                    running.renderer.resize(physical_size);
+                    self.game
+                        .resized((running.renderer.width(), running.renderer.height()));
+                }
             }
             WindowEvent::Focused(focused) => {
                 self.game.focus_changed(focused);
