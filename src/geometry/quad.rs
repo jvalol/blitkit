@@ -1,3 +1,5 @@
+/// A rectangle in physical pixels: `position` is its center, measured from the
+/// window's top-left corner with y pointing down, and `size` is its full width and height.
 #[derive(Debug, Copy, Clone)]
 pub struct Quad {
     pub position: cgmath::Vector2<f32>,

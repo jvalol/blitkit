@@ -20,6 +20,8 @@ pub struct Renderer {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
+    screen_buffer: wgpu::Buffer,
+    screen_bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     text_brush: TextBrush<FontRef<'static>>,
@@ -71,7 +73,35 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
-        let pipeline = create_render_pipeline(&device, config.format);
+        let screen_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Screen Uniform"),
+            contents: bytemuck::cast_slice(&screen_size(&config)),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let screen_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Screen Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+        let screen_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Screen Bind Group"),
+            layout: &screen_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: screen_buffer.as_entire_binding(),
+            }],
+        });
+
+        let pipeline = create_render_pipeline(&device, config.format, &screen_bind_group_layout);
 
         let vertex_buffer = create_buffer(&device, 0, wgpu::BufferUsages::VERTEX);
         let index_buffer = create_buffer(&device, 0, wgpu::BufferUsages::INDEX);
@@ -89,6 +119,8 @@ impl Renderer {
             queue,
             config,
             pipeline,
+            screen_buffer,
+            screen_bind_group,
             vertex_buffer,
             index_buffer,
             text_brush,
@@ -103,6 +135,11 @@ impl Renderer {
         self.config.width = new_size.width;
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
+        self.queue.write_buffer(
+            &self.screen_buffer,
+            0,
+            bytemuck::cast_slice(&screen_size(&self.config)),
+        );
         self.text_brush
             .resize_view(self.width(), self.height(), &self.queue);
     }
@@ -166,6 +203,7 @@ impl Renderer {
             let num_indices = geometry.index_data().len() as u32;
             if num_indices != 0 {
                 render_pass.set_pipeline(&self.pipeline);
+                render_pass.set_bind_group(0, &self.screen_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -225,15 +263,21 @@ fn create_buffer_init(
     })
 }
 
+/// The screen size uniform the quad shader converts pixel positions with.
+fn screen_size(config: &wgpu::SurfaceConfiguration) -> [f32; 4] {
+    [config.width as f32, config.height as f32, 0.0, 0.0]
+}
+
 fn create_render_pipeline(
     device: &wgpu::Device,
     color_format: wgpu::TextureFormat,
+    screen_bind_group_layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::include_wgsl!("../../res/shaders/quad.wgsl"));
 
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Pipeline Layout"),
-        bind_group_layouts: &[],
+        bind_group_layouts: &[Some(screen_bind_group_layout)],
         immediate_size: 0,
     });
 
