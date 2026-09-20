@@ -42,4 +42,4 @@ wants to scale with the display does it from the size given to `resized`.
 
 ## Out of scope
 
-Rotation, scaling, textures, and color. Every quad is drawn solid white.
+Rotation, scaling, and textures. Color is spec 0006.

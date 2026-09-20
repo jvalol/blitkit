@@ -38,15 +38,19 @@ impl Geometry {
         self.vertex_data.extend(&[
             vertex::Vertex {
                 position: (min_x, min_y).into(),
+                color: quad.color,
             },
             vertex::Vertex {
                 position: (max_x, min_y).into(),
+                color: quad.color,
             },
             vertex::Vertex {
                 position: (max_x, max_y).into(),
+                color: quad.color,
             },
             vertex::Vertex {
                 position: (min_x, max_y).into(),
+                color: quad.color,
             },
         ]);
         self.index_data.extend(&[
@@ -91,6 +95,29 @@ mod tests {
             vec![(90.0, 45.0), (110.0, 45.0), (110.0, 55.0), (90.0, 55.0)]
         );
         assert_eq!(geometry.num_quads, 1);
+    }
+
+    #[test]
+    fn push_quad_carries_its_color_to_every_vertex() {
+        let mut geometry = Geometry::new();
+        let red = cgmath::Vector4::new(1.0, 0.0, 0.0, 1.0);
+        geometry.push_quad(&Quad::colored((0.0, 0.0).into(), (2.0, 2.0).into(), red));
+
+        assert!(geometry
+            .vertex_data()
+            .iter()
+            .all(|vertex| vertex.color == red));
+    }
+
+    #[test]
+    fn quads_default_to_white() {
+        let mut geometry = Geometry::new();
+        geometry.push_quad(&Quad::new((0.0, 0.0).into(), (2.0, 2.0).into()));
+
+        assert!(geometry
+            .vertex_data()
+            .iter()
+            .all(|vertex| vertex.color == quad::WHITE));
     }
 
     #[test]

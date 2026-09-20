@@ -13,3 +13,4 @@ not a priority, and it never changes once a spec exists.
 | [0003](0003-keyboard-input.md) | Keyboard events, key repeat, and unmapped keys |
 | [0004](0004-sound-output.md) | Sound playback and what happens with no device |
 | [0005](0005-window-lifecycle.md) | Window size, focus, resizing, and quitting |
+| [0006](0006-quad-color.md) | Per-quad color |
