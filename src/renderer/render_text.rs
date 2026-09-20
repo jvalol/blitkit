@@ -1,4 +1,4 @@
-pub const UNBOUNDED_F32: f32 = std::f32::INFINITY;
+pub const UNBOUNDED_F32: f32 = f32::INFINITY;
 
 #[derive(Debug, Clone)]
 pub struct RenderText {
@@ -27,6 +27,12 @@ impl Default for RenderText {
 
 pub struct TextRenderer {
     pub render_texts: Vec<RenderText>,
+}
+
+impl Default for TextRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TextRenderer {

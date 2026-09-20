@@ -8,6 +8,12 @@ pub struct Geometry {
     pub num_quads: u32,
 }
 
+impl Default for Geometry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Geometry {
     pub fn new() -> Self {
         Self {
@@ -44,10 +50,10 @@ impl Geometry {
             },
         ]);
         self.index_data.extend(&[
-            self.num_quads * 4 + 0,
+            (self.num_quads * 4),
             self.num_quads * 4 + 1,
             self.num_quads * 4 + 2,
-            self.num_quads * 4 + 0,
+            (self.num_quads * 4),
             self.num_quads * 4 + 2,
             self.num_quads * 4 + 3,
         ]);

@@ -11,6 +11,12 @@ struct Output {
     _sink: rodio::MixerDeviceSink,
 }
 
+impl Default for SoundSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SoundSystem {
     pub fn new() -> Self {
         let output = match rodio::DeviceSinkBuilder::open_default_sink() {
