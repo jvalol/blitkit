@@ -11,4 +11,12 @@ Feel free to follow along!
 
 - [pong](https://github.com/jvalol/pong)
 - [snake](https://github.com/jvalol/snake)
-- tetris
+- [tetris](https://github.com/jvalol/tetris)
+
+## License
+
+The code is under MIT or Apache-2.0, whichever you prefer.
+
+The font that ships with it, Press Start 2P, is not mine and is licensed
+separately under the SIL Open Font License 1.1. That license travels with it in
+`res/fonts/OFL.txt`.
