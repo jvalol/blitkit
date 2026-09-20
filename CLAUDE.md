@@ -1,4 +1,4 @@
-# dynamo_lib
+# blitkit
 
 A small 2D game engine over wgpu. A game implements the `Game` trait and calls
 `start()`, and the engine owns the window, the event loop, rendering, keyboard

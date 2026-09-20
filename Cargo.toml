@@ -1,5 +1,5 @@
 [package]
-name = "dynamo_lib"
+name = "blitkit"
 version = "0.1.0"
 authors = ["Jake Van Alstyne 🎩 <jake.van.alstyne@hey.com>"]
 edition = "2018"
