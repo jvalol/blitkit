@@ -62,3 +62,58 @@ impl Geometry {
         &self.index_data
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn corners(geometry: &Geometry) -> Vec<(f32, f32)> {
+        geometry
+            .vertex_data()
+            .iter()
+            .map(|vertex| (vertex.position.x, vertex.position.y))
+            .collect()
+    }
+
+    #[test]
+    fn push_quad_makes_corner_vertices() {
+        let mut geometry = Geometry::new();
+        geometry.push_quad(&Quad::new((100.0, 50.0).into(), (20.0, 10.0).into()));
+
+        assert_eq!(
+            corners(&geometry),
+            vec![(90.0, 45.0), (110.0, 45.0), (110.0, 55.0), (90.0, 55.0)]
+        );
+        assert_eq!(geometry.num_quads, 1);
+    }
+
+    #[test]
+    fn push_quad_makes_two_triangles() {
+        let mut geometry = Geometry::new();
+        geometry.push_quad(&Quad::new((0.0, 0.0).into(), (2.0, 2.0).into()));
+
+        assert_eq!(geometry.index_data(), &[0, 1, 2, 0, 2, 3]);
+    }
+
+    #[test]
+    fn second_quad_indices_are_offset() {
+        let mut geometry = Geometry::new();
+        geometry.push_quad(&Quad::new((0.0, 0.0).into(), (2.0, 2.0).into()));
+        geometry.push_quad(&Quad::new((8.0, 8.0).into(), (2.0, 2.0).into()));
+
+        assert_eq!(geometry.vertex_data().len(), 8);
+        assert_eq!(geometry.index_data()[6..], [4, 5, 6, 4, 6, 7]);
+        assert_eq!(geometry.num_quads, 2);
+    }
+
+    #[test]
+    fn reset_clears_geometry() {
+        let mut geometry = Geometry::new();
+        geometry.push_quad(&Quad::new((0.0, 0.0).into(), (2.0, 2.0).into()));
+        geometry.reset();
+
+        assert!(geometry.vertex_data().is_empty());
+        assert!(geometry.index_data().is_empty());
+        assert_eq!(geometry.num_quads, 0);
+    }
+}

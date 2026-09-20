@@ -48,6 +48,11 @@ pub trait Game {
 /// instead of taking one large step.
 pub const MAX_DELTA_TIME: f32 = 0.05;
 
+/// Caps a frame time at [`MAX_DELTA_TIME`]. See `specs/0002-frame-timing.md`.
+pub fn clamp_delta_time(seconds: f32) -> f32 {
+    seconds.min(MAX_DELTA_TIME)
+}
+
 pub fn start(title: &str, game: Box<dyn Game>) {
     env_logger::init();
     let event_loop = EventLoop::new().unwrap();
@@ -127,9 +132,7 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
-                let dt = (now - running.last_update)
-                    .as_secs_f32()
-                    .min(MAX_DELTA_TIME);
+                let dt = clamp_delta_time((now - running.last_update).as_secs_f32());
                 running.last_update = now;
 
                 self.game.update(
@@ -153,7 +156,11 @@ impl ApplicationHandler for App {
                 ..
             } => {
                 if let Some(key) = keyboard::KeyboardKey::from_key_code(key_code) {
-                    let keyboard_input = keyboard::KeyboardInput::new(key, &state, repeat);
+                    let keyboard_input = keyboard::KeyboardInput::new(
+                        key,
+                        keyboard::KeyboardKeyState::from(&state),
+                        repeat,
+                    );
                     self.game.process_keyboard(keyboard_input);
                 }
             }
@@ -180,5 +187,28 @@ impl ApplicationHandler for App {
         if let Some(running) = self.running.as_ref() {
             running.window.request_redraw();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_delta_time_passes_normal_frames() {
+        // 60 fps and 120 fps
+        assert_eq!(clamp_delta_time(1.0 / 60.0), 1.0 / 60.0);
+        assert_eq!(clamp_delta_time(1.0 / 120.0), 1.0 / 120.0);
+    }
+
+    #[test]
+    fn clamp_delta_time_caps_long_frames() {
+        assert_eq!(clamp_delta_time(2.0), MAX_DELTA_TIME);
+        assert_eq!(clamp_delta_time(MAX_DELTA_TIME + 0.01), MAX_DELTA_TIME);
+    }
+
+    #[test]
+    fn max_delta_time_is_a_twentieth_of_a_second() {
+        assert_eq!(MAX_DELTA_TIME, 1.0 / 20.0);
     }
 }

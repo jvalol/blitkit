@@ -1,13 +1,13 @@
 use winit::event::ElementState;
 use winit::keyboard::KeyCode;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum KeyboardKeyState {
     Pressed,
     Released,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum KeyboardKey {
     Key1,
     Key2,
@@ -157,6 +157,52 @@ pub enum KeyboardKey {
     Copy,
     Paste,
     Cut,
+    Lang1,
+    Lang2,
+    Lang3,
+    Lang4,
+    Lang5,
+    Help,
+    NumpadBackspace,
+    NumpadClear,
+    NumpadClearEntry,
+    NumpadHash,
+    NumpadMemoryAdd,
+    NumpadMemoryClear,
+    NumpadMemoryRecall,
+    NumpadMemoryStore,
+    NumpadMemorySubtract,
+    NumpadParenLeft,
+    NumpadParenRight,
+    NumpadStar,
+    Fn,
+    FnLock,
+    Eject,
+    Meta,
+    Hyper,
+    Turbo,
+    Abort,
+    Resume,
+    Suspend,
+    Again,
+    Find,
+    Open,
+    Props,
+    Select,
+    Undo,
+    Hiragana,
+    Katakana,
+    F25,
+    F26,
+    F27,
+    F28,
+    F29,
+    F30,
+    F31,
+    F32,
+    F33,
+    F34,
+    F35,
 }
 
 impl KeyboardKey {
@@ -311,6 +357,52 @@ impl KeyboardKey {
             KeyCode::Copy => KeyboardKey::Copy,
             KeyCode::Paste => KeyboardKey::Paste,
             KeyCode::Cut => KeyboardKey::Cut,
+            KeyCode::Lang1 => KeyboardKey::Lang1,
+            KeyCode::Lang2 => KeyboardKey::Lang2,
+            KeyCode::Lang3 => KeyboardKey::Lang3,
+            KeyCode::Lang4 => KeyboardKey::Lang4,
+            KeyCode::Lang5 => KeyboardKey::Lang5,
+            KeyCode::Help => KeyboardKey::Help,
+            KeyCode::NumpadBackspace => KeyboardKey::NumpadBackspace,
+            KeyCode::NumpadClear => KeyboardKey::NumpadClear,
+            KeyCode::NumpadClearEntry => KeyboardKey::NumpadClearEntry,
+            KeyCode::NumpadHash => KeyboardKey::NumpadHash,
+            KeyCode::NumpadMemoryAdd => KeyboardKey::NumpadMemoryAdd,
+            KeyCode::NumpadMemoryClear => KeyboardKey::NumpadMemoryClear,
+            KeyCode::NumpadMemoryRecall => KeyboardKey::NumpadMemoryRecall,
+            KeyCode::NumpadMemoryStore => KeyboardKey::NumpadMemoryStore,
+            KeyCode::NumpadMemorySubtract => KeyboardKey::NumpadMemorySubtract,
+            KeyCode::NumpadParenLeft => KeyboardKey::NumpadParenLeft,
+            KeyCode::NumpadParenRight => KeyboardKey::NumpadParenRight,
+            KeyCode::NumpadStar => KeyboardKey::NumpadStar,
+            KeyCode::Fn => KeyboardKey::Fn,
+            KeyCode::FnLock => KeyboardKey::FnLock,
+            KeyCode::Eject => KeyboardKey::Eject,
+            KeyCode::Meta => KeyboardKey::Meta,
+            KeyCode::Hyper => KeyboardKey::Hyper,
+            KeyCode::Turbo => KeyboardKey::Turbo,
+            KeyCode::Abort => KeyboardKey::Abort,
+            KeyCode::Resume => KeyboardKey::Resume,
+            KeyCode::Suspend => KeyboardKey::Suspend,
+            KeyCode::Again => KeyboardKey::Again,
+            KeyCode::Find => KeyboardKey::Find,
+            KeyCode::Open => KeyboardKey::Open,
+            KeyCode::Props => KeyboardKey::Props,
+            KeyCode::Select => KeyboardKey::Select,
+            KeyCode::Undo => KeyboardKey::Undo,
+            KeyCode::Hiragana => KeyboardKey::Hiragana,
+            KeyCode::Katakana => KeyboardKey::Katakana,
+            KeyCode::F25 => KeyboardKey::F25,
+            KeyCode::F26 => KeyboardKey::F26,
+            KeyCode::F27 => KeyboardKey::F27,
+            KeyCode::F28 => KeyboardKey::F28,
+            KeyCode::F29 => KeyboardKey::F29,
+            KeyCode::F30 => KeyboardKey::F30,
+            KeyCode::F31 => KeyboardKey::F31,
+            KeyCode::F32 => KeyboardKey::F32,
+            KeyCode::F33 => KeyboardKey::F33,
+            KeyCode::F34 => KeyboardKey::F34,
+            KeyCode::F35 => KeyboardKey::F35,
             _ => return None,
         })
     }
@@ -334,8 +426,89 @@ pub struct KeyboardInput {
 }
 
 impl KeyboardInput {
-    pub fn new(key: KeyboardKey, state: &ElementState, repeat: bool) -> Self {
-        let state = KeyboardKeyState::from(state);
+    pub fn new(key: KeyboardKey, state: KeyboardKeyState, repeat: bool) -> Self {
         Self { key, state, repeat }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_letter_keys() {
+        assert_eq!(
+            KeyboardKey::from_key_code(KeyCode::KeyW),
+            Some(KeyboardKey::W)
+        );
+        assert_eq!(
+            KeyboardKey::from_key_code(KeyCode::KeyS),
+            Some(KeyboardKey::S)
+        );
+        assert_eq!(
+            KeyboardKey::from_key_code(KeyCode::Digit0),
+            Some(KeyboardKey::Key0)
+        );
+    }
+
+    #[test]
+    fn maps_named_keys() {
+        assert_eq!(
+            KeyboardKey::from_key_code(KeyCode::Escape),
+            Some(KeyboardKey::Escape)
+        );
+        assert_eq!(
+            KeyboardKey::from_key_code(KeyCode::Enter),
+            Some(KeyboardKey::Return)
+        );
+        assert_eq!(
+            KeyboardKey::from_key_code(KeyCode::ArrowUp),
+            Some(KeyboardKey::Up)
+        );
+        assert_eq!(
+            KeyboardKey::from_key_code(KeyCode::Backspace),
+            Some(KeyboardKey::Back)
+        );
+    }
+
+    #[test]
+    fn mapping_is_one_to_one() {
+        // Two key codes mapping to one variant would make a game see one key as another.
+        let codes = [
+            KeyCode::KeyA,
+            KeyCode::KeyZ,
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::ShiftLeft,
+            KeyCode::ShiftRight,
+            KeyCode::Numpad0,
+            KeyCode::Digit0,
+        ];
+        let mut keys: Vec<KeyboardKey> = codes
+            .iter()
+            .map(|code| KeyboardKey::from_key_code(*code).unwrap())
+            .collect();
+        let before = keys.len();
+        keys.dedup_by(|a, b| a == b);
+
+        assert_eq!(keys.len(), before);
+    }
+
+    #[test]
+    fn carries_key_state() {
+        let pressed = KeyboardInput::new(KeyboardKey::W, KeyboardKeyState::Pressed, false);
+        let released = KeyboardInput::new(KeyboardKey::W, KeyboardKeyState::Released, false);
+
+        assert_eq!(pressed.state, KeyboardKeyState::Pressed);
+        assert_eq!(released.state, KeyboardKeyState::Released);
+    }
+
+    #[test]
+    fn carries_repeat() {
+        let first = KeyboardInput::new(KeyboardKey::Escape, KeyboardKeyState::Pressed, false);
+        let held = KeyboardInput::new(KeyboardKey::Escape, KeyboardKeyState::Pressed, true);
+
+        assert!(!first.repeat);
+        assert!(held.repeat);
     }
 }
