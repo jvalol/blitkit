@@ -1,0 +1,47 @@
+# 0008 Camera
+
+**Status:** draft
+**Date:** 2026-09-21
+
+## Goal
+
+A viewpoint a game can move, which is what separates a 3D scene from a picture.
+
+## Behavior
+
+A `Camera` holds a position, a target it looks at, an up direction, a vertical
+field of view, and near and far planes. It produces a view matrix and a
+projection matrix, and the engine sends their product to the GPU in a uniform,
+the same way the screen size uniform already works. The matrices come from
+`glam::camera::rh::proj::directx::perspective` and `look_at_mat4`, per spec
+0007.
+
+The aspect ratio comes from the surface and is updated on resize, so the picture
+doesn't stretch. The uniform is written once per frame rather than per object.
+
+A game sets the camera through the renderer. There is no camera controller in the
+engine: a game moves its own camera, the way it moves everything else.
+
+**Defaults** so a game can draw something before thinking about cameras: at
+`(0, 1, 5)` looking at the origin, 60 degree field of view, near 0.1, far 100.
+
+Text and quads keep drawing in pixels and ignore the camera entirely. They are
+separate pipelines and always have been.
+
+## Acceptance criteria
+
+- The view matrix puts the camera where it says it is. — `camera::tests::view_matrix_places_the_camera`
+- A point at the near plane lands at depth 0, at the far plane at 1. — `camera::tests::projection_matches_wgpu_clip_space`
+- Aspect ratio follows the window. — `camera::tests::aspect_follows_the_window`
+- The default camera can see the origin. — `camera::tests::the_default_camera_sees_the_origin`
+- Moving the camera changes the view matrix. — `camera::tests::moving_the_camera_changes_the_view`
+
+### Verified by hand
+
+- Moving the camera in a game moves the scene the expected way. — run the 3D
+  example and drive the camera.
+
+## Out of scope
+
+Orthographic projection, several cameras at once, frustum culling, and any
+built-in camera controller.
