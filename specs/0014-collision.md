@@ -29,6 +29,16 @@ The sweep grows the box by the sphere's radius and casts a ray at it, which
 treats the sphere as square at the corners. A ball clipping the very corner of a
 box stops a little early, which is the forgiving direction.
 
+**A sweep that starts in contact** is decided by direction rather than by the
+ray, since a ray starting on a surface reports a hit at no distance with an
+arbitrary normal. Movement into the surface is blocked; movement away from it or
+along it is free. Without that, a ball resting on a floor cannot roll along it.
+
+Contact means the sphere's center is inside the box grown by its radius, not
+that the sphere overlaps the box. Near an edge those differ, and using the
+narrower test strands a ball at the lip of a floor instead of letting it roll
+off.
+
 **Move and slide** is the one piece of movement the engine provides: given a
 sphere, a velocity, a time step and a set of boxes, it returns where the sphere
 ends up, sliding along surfaces rather than stopping dead at them. It repeats up
@@ -54,6 +64,8 @@ hot path.
 - A sphere driven into a corner stops without jitter. — `collision::tests::move_and_slide_settles_in_a_corner`
 - Movement through open space is unchanged. — `collision::tests::move_and_slide_leaves_open_space_alone`
 - A mesh reports its bounds. — `mesh::tests::a_mesh_knows_its_bounds`
+- A ball resting on a floor rolls along it but does not sink through it. — `collision::tests::resting_on_a_floor_rolls_but_does_not_sink`
+- A ball at the lip of a floor rolls off rather than sticking. — `collision::tests::a_ball_rolls_off_the_end_of_a_floor`
 
 ### Verified by hand
 

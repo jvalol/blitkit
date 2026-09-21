@@ -229,6 +229,30 @@ pub fn sweep_sphere(sphere: &Sphere, movement: Vec3, box_: &Aabb) -> Option<Hit>
     }
 
     let grown = box_.expanded(Vec3::splat(sphere.radius));
+
+    // Already in contact, which is what resting on a floor is, and also what
+    // sitting at its edge is: the sphere can be clear of the box while its
+    // center is still inside the grown one. A ray from in there reports a hit
+    // at no distance with whichever axis the slab test looked at first, which
+    // would block rolling along a floor, and off the end of it, as surely as
+    // falling through it. Decide by direction instead: into the surface is
+    // blocked, away from it or along it is free.
+    if grown.contains_point(sphere.center) {
+        let closest = box_.closest_point(sphere.center);
+        let away = (sphere.center - closest).normalize_or_zero();
+        let away = if away.length_squared() < 0.5 { Vec3::Y } else { away };
+
+        return if movement.dot(away) >= 0.0 {
+            None
+        } else {
+            Some(Hit {
+                distance: 0.0,
+                point: closest,
+                normal: away,
+            })
+        };
+    }
+
     let ray = Ray::new(sphere.center, movement);
 
     match ray.hit_aabb(&grown) {
@@ -379,6 +403,42 @@ mod tests {
         assert!(hit.distance < 5.0, "stopped at {}", hit.distance);
         // and a test of where it ended up would have seen nothing
         assert!(!Sphere::new(vec3(20.0, 0.0, 0.0), 0.5).intersects_aabb(&wall));
+    }
+
+    #[test]
+    fn resting_on_a_floor_rolls_but_does_not_sink() {
+        let floor = Aabb::from_center_size(vec3(0.0, -0.5, 0.0), vec3(20.0, 1.0, 20.0));
+        // exactly touching, which is where a ball at rest ends up
+        let ball = Sphere::new(vec3(0.0, 0.5, 0.0), 0.5);
+
+        // along the floor is free
+        assert!(sweep_sphere(&ball, vec3(1.0, 0.0, 0.0), &floor).is_none());
+        // up and away is free
+        assert!(sweep_sphere(&ball, vec3(0.0, 1.0, 0.0), &floor).is_none());
+        // down into it is not
+        let hit = sweep_sphere(&ball, vec3(0.0, -1.0, 0.0), &floor)
+            .expect("gravity should still be stopped by the floor");
+        assert_eq!(hit.distance, 0.0);
+        assert!((hit.normal - Vec3::Y).length() < 1e-5, "{:?}", hit.normal);
+
+        // and rolling along it keeps its whole step
+        let end = move_and_slide(ball, vec3(4.0, 0.0, 0.0), 1.0, &[floor]);
+        assert!((end.x - 4.0).abs() < 1e-3, "rolled to {:?}", end);
+    }
+
+    #[test]
+    fn a_ball_rolls_off_the_end_of_a_floor() {
+        // the floor runs to x = 10, and the ball is just past its edge: clear of
+        // the box, but still inside the box grown by its radius
+        let floor = Aabb::from_center_size(vec3(0.0, -0.5, 0.0), vec3(20.0, 1.0, 20.0));
+        let ball = Sphere::new(vec3(10.14, 0.5, 0.0), 0.5);
+
+        assert!(!ball.intersects_aabb(&floor), "the ball is past the edge");
+
+        // carrying on outward is free, not blocked by the floor behind it
+        assert!(sweep_sphere(&ball, vec3(1.0, 0.0, 0.0), &floor).is_none());
+        let end = move_and_slide(ball, vec3(4.0, 0.0, 0.0), 1.0, &[floor]);
+        assert!(end.x > 13.0, "it stopped at the edge: {:?}", end);
     }
 
     #[test]
