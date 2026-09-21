@@ -219,12 +219,15 @@ impl Ray {
 
 /// Moves a sphere along `movement` and reports the first box it touches.
 ///
-/// The box is grown by the sphere's radius and a ray is cast at it, which
-/// treats the sphere as square at the corners. A ball clipping the very corner
-/// of a box stops slightly early, which is the forgiving direction.
+/// A sphere sweeping past a box meets a shape with flat faces, rounded edges
+/// and rounded corners: the box grown by the radius, with its corners filed
+/// off. Growing the box and casting a ray at it gets the faces right and the
+/// corners wrong, and the difference is not academic. A ball rolling level with
+/// the top of a platform toward the next one is nowhere near touching it, but a
+/// square corner says otherwise and stops it dead at the seam.
 pub fn sweep_sphere(sphere: &Sphere, movement: Vec3, box_: &Aabb) -> Option<Hit> {
-    let distance = movement.length();
-    if distance < f32::EPSILON {
+    let travel = movement.length();
+    if travel < f32::EPSILON {
         return None;
     }
 
@@ -238,27 +241,166 @@ pub fn sweep_sphere(sphere: &Sphere, movement: Vec3, box_: &Aabb) -> Option<Hit>
     // falling through it. Decide by direction instead: into the surface is
     // blocked, away from it or along it is free.
     if grown.contains_point(sphere.center) {
-        let closest = box_.closest_point(sphere.center);
-        let away = (sphere.center - closest).normalize_or_zero();
-        let away = if away.length_squared() < 0.5 { Vec3::Y } else { away };
+        let away = nearest_face(&grown, sphere.center);
 
         return if movement.dot(away) >= 0.0 {
             None
         } else {
             Some(Hit {
                 distance: 0.0,
-                point: closest,
+                point: box_.closest_point(sphere.center),
                 normal: away,
             })
         };
     }
 
     let ray = Ray::new(sphere.center, movement);
-
-    match ray.hit_aabb(&grown) {
-        Some(hit) if hit.distance <= distance => Some(hit),
-        _ => None,
+    let entry = ray.hit_aabb(&grown)?;
+    if entry.distance > travel {
+        return None;
     }
+
+    // Which faces of the grown box the entry point sits beyond tells us what
+    // the sphere is really about to meet: one axis is a flat face, two is a
+    // rounded edge, three is a rounded corner.
+    let point = ray.at(entry.distance);
+    let mut beyond = [false; 3];
+    let mut count = 0;
+    for axis in 0..3 {
+        if point[axis] < box_.min[axis] || point[axis] > box_.max[axis] {
+            beyond[axis] = true;
+            count += 1;
+        }
+    }
+
+    if count <= 1 {
+        return Some(Hit {
+            distance: entry.distance,
+            point,
+            normal: entry.normal,
+        });
+    }
+
+    // The corner or edge the sphere is heading for, as a point or a segment.
+    let mut corner = Vec3::ZERO;
+    for axis in 0..3 {
+        corner[axis] = if point[axis] < box_.min[axis] {
+            box_.min[axis]
+        } else if point[axis] > box_.max[axis] {
+            box_.max[axis]
+        } else {
+            point[axis]
+        };
+    }
+
+    let distance = if count == 3 {
+        // a corner: the rounded part is a sphere sitting on it
+        ray.hit_sphere(&Sphere::new(corner, sphere.radius))
+            .map(|hit| hit.distance)
+    } else {
+        // an edge: the rounded part is a cylinder lying along it
+        let free = (0..3).find(|axis| !beyond[*axis]).expect("two axes are beyond");
+        sweep_against_edge(&ray, corner, free, box_, sphere.radius)
+    }?;
+
+    if distance > travel {
+        return None;
+    }
+
+    let center = ray.at(distance);
+    let normal = (center - box_.closest_point(center)).normalize_or_zero();
+
+    Some(Hit {
+        distance,
+        point: box_.closest_point(center),
+        normal: if normal.length_squared() < 0.5 {
+            entry.normal
+        } else {
+            normal
+        },
+    })
+}
+
+/// How far along `ray` a sphere of `radius` first touches the box edge running
+/// along `free` through `corner`.
+fn sweep_against_edge(ray: &Ray, corner: Vec3, free: usize, box_: &Aabb, radius: f32) -> Option<f32> {
+    // flatten out the axis the edge runs along: what is left is a circle
+    let others: Vec<usize> = (0..3).filter(|axis| *axis != free).collect();
+    let (a, b) = (others[0], others[1]);
+
+    let ox = ray.origin[a] - corner[a];
+    let oy = ray.origin[b] - corner[b];
+    let dx = ray.direction[a];
+    let dy = ray.direction[b];
+
+    let quadratic_a = dx * dx + dy * dy;
+    if quadratic_a < f32::EPSILON {
+        // travelling straight along the edge, so it never closes in on it
+        return None;
+    }
+
+    let half_b = ox * dx + oy * dy;
+    let c = ox * ox + oy * oy - radius * radius;
+    let discriminant = half_b * half_b - quadratic_a * c;
+    if discriminant < 0.0 {
+        return None;
+    }
+
+    let distance = (-half_b - discriminant.sqrt()) / quadratic_a;
+    if distance < 0.0 {
+        return None;
+    }
+
+    // it only counts if it lands on the edge itself rather than past its ends,
+    // where a corner takes over
+    let along = ray.origin[free] + ray.direction[free] * distance;
+    if along < box_.min[free] || along > box_.max[free] {
+        return ray
+            .hit_sphere(&Sphere::new(nearest_end(corner, free, box_, along), radius))
+            .map(|hit| hit.distance);
+    }
+
+    Some(distance)
+}
+
+fn nearest_end(corner: Vec3, free: usize, box_: &Aabb, along: f32) -> Vec3 {
+    let mut end = corner;
+    end[free] = if along < box_.min[free] {
+        box_.min[free]
+    } else {
+        box_.max[free]
+    };
+    end
+}
+
+/// Which way out of a box a point is nearest to, as an outward normal.
+///
+/// This is the contact normal for a sphere already touching a box, taken from
+/// the box grown by its radius. Taking it from the nearest point on the box
+/// itself looks reasonable and is wrong: a ball resting level with the top of a
+/// box reads as pressed into its side, so rolling from one platform onto
+/// another at the same height gets blocked at the seam.
+fn nearest_face(box_: &Aabb, point: Vec3) -> Vec3 {
+    let to_min = point - box_.min;
+    let to_max = box_.max - point;
+
+    let mut normal = Vec3::Y;
+    let mut nearest = f32::INFINITY;
+
+    for axis in 0..3 {
+        if to_min[axis] < nearest {
+            nearest = to_min[axis];
+            normal = Vec3::ZERO;
+            normal[axis] = -1.0;
+        }
+        if to_max[axis] < nearest {
+            nearest = to_max[axis];
+            normal = Vec3::ZERO;
+            normal[axis] = 1.0;
+        }
+    }
+
+    normal
 }
 
 /// Moves a sphere by `velocity` for `dt`, sliding along whatever it hits rather
@@ -439,6 +581,81 @@ mod tests {
         assert!(sweep_sphere(&ball, vec3(1.0, 0.0, 0.0), &floor).is_none());
         let end = move_and_slide(ball, vec3(4.0, 0.0, 0.0), 1.0, &[floor]);
         assert!(end.x > 13.0, "it stopped at the edge: {:?}", end);
+    }
+
+    #[test]
+    fn a_ball_rolls_from_one_platform_onto_the_next() {
+        // two platforms whose tops are level, meeting at z = 0
+        let first = Aabb::from_center_size(vec3(0.0, -0.5, 4.0), vec3(10.0, 1.0, 10.0));
+        let second = Aabb::from_center_size(vec3(0.0, -0.5, -6.0), vec3(5.0, 1.0, 12.0));
+        let ball = Sphere::new(vec3(0.0, 0.5, 0.5), 0.5);
+
+        // rolling toward the seam is not rolling into a wall
+        assert!(sweep_sphere(&ball, vec3(0.0, 0.0, -2.0), &second).is_none());
+
+        let end = move_and_slide(ball, vec3(0.0, 0.0, -6.0), 1.0, &[first, second]);
+        assert!(end.z < -4.0, "it stopped at the seam: {:?}", end);
+    }
+
+    #[test]
+    fn a_ball_level_with_a_platform_top_is_not_blocked_by_its_side() {
+        // the exact case the marble game hit: rolling along one platform toward
+        // another whose top is at the same height. The ball's center is 0.57
+        // from the platform, well clear of its 0.4 radius, so nothing should
+        // stop it, though a square cornered sweep says otherwise.
+        let next = Aabb::from_center_size(vec3(0.0, -0.5, -6.0), vec3(5.0, 1.0, 12.0));
+        let ball = Sphere::new(vec3(0.0, 0.4, 0.6), 0.4);
+
+        assert!(
+            sweep_sphere(&ball, vec3(0.0, 0.0, -0.5), &next).is_none(),
+            "stopped short of a platform it is level with"
+        );
+
+        let end = move_and_slide(ball, vec3(0.0, 0.0, -6.0), 1.0, &[next]);
+        assert!(end.z < -4.0, "it stopped at the seam: {:?}", end);
+    }
+
+    #[test]
+    fn a_ball_still_lands_on_a_platform_from_above() {
+        let platform = Aabb::from_center_size(vec3(0.0, -0.5, 0.0), vec3(10.0, 1.0, 10.0));
+        let ball = Sphere::new(vec3(0.0, 4.0, 0.0), 0.4);
+
+        let hit = sweep_sphere(&ball, vec3(0.0, -8.0, 0.0), &platform)
+            .expect("falling onto a platform still stops");
+
+        assert!((hit.distance - 3.6).abs() < 1e-3, "distance {}", hit.distance);
+        assert!((hit.normal - Vec3::Y).length() < 1e-3, "{:?}", hit.normal);
+    }
+
+    #[test]
+    fn a_ball_is_still_stopped_by_a_wall_it_faces() {
+        let wall = Aabb::from_center_size(vec3(3.0, 1.0, 0.0), vec3(1.0, 2.0, 10.0));
+        let ball = Sphere::new(vec3(0.0, 0.5, 0.0), 0.4);
+
+        let hit = sweep_sphere(&ball, vec3(6.0, 0.0, 0.0), &wall).expect("a wall stops it");
+
+        // the wall's near face is at x 2.5, so contact is 0.4 short of it
+        assert!((hit.distance - 2.1).abs() < 1e-3, "distance {}", hit.distance);
+        assert!((hit.normal - vec3(-1.0, 0.0, 0.0)).length() < 1e-3, "{:?}", hit.normal);
+    }
+
+    #[test]
+    fn a_corner_is_rounded_rather_than_square() {
+        let box_ = Aabb::from_center_size(Vec3::ZERO, Vec3::splat(2.0));
+        // heading at the corner diagonally from outside
+        let ball = Sphere::new(vec3(3.0, 3.0, 0.0), 0.5);
+
+        let hit = sweep_sphere(&ball, vec3(-4.0, -4.0, 0.0), &box_).expect("it meets the corner");
+
+        // a square corner would stop it at the grown box, 0.5 further out than
+        // the rounded one, which sits 0.5 from the corner along the diagonal
+        let center = vec3(3.0, 3.0, 0.0) + vec3(-4.0, -4.0, 0.0).normalize() * hit.distance;
+        let corner = vec3(1.0, 1.0, 0.0);
+        assert!(
+            ((center - corner).length() - 0.5).abs() < 1e-3,
+            "contact was {} from the corner",
+            (center - corner).length()
+        );
     }
 
     #[test]
