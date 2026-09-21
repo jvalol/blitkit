@@ -10,6 +10,8 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["gamedev", "graphics", "wgpu", "3d", "engine"]
 categories = ["game-engines", "graphics"]
+# the old name's final release lives here; it is not part of this crate
+exclude = ["farewell"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -1,0 +1,14 @@
+[package]
+name = "blitkit"
+version = "0.2.10"
+authors = ["Jake Van Alstyne 🎩 <jake.van.alstyne@hey.com>"]
+edition = "2018"
+rust-version = "1.87"
+description = "Renamed to blitzkit. This version is a signpost and nothing else."
+repository = "https://github.com/jvalol/blitzkit"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["gamedev", "graphics", "wgpu", "3d", "engine"]
+categories = ["game-engines", "graphics"]
+
+[dependencies]
