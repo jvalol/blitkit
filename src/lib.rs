@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod collision;
 pub mod geometry;
 pub mod keyboard;
 pub mod lighting;

@@ -1,6 +1,6 @@
 # 0014 Collision
 
-**Status:** draft
+**Status:** implemented
 **Date:** 2026-09-21
 
 ## Goal
@@ -24,6 +24,10 @@ turns a cursor position into the thing under it, per spec 0013.
 **Swept tests** move a sphere along a line and report the first box it touches,
 so something fast cannot pass through a wall between frames. A test that only
 looks at where things ended up misses that.
+
+The sweep grows the box by the sphere's radius and casts a ray at it, which
+treats the sphere as square at the corners. A ball clipping the very corner of a
+box stops a little early, which is the forgiving direction.
 
 **Move and slide** is the one piece of movement the engine provides: given a
 sphere, a velocity, a time step and a set of boxes, it returns where the sphere
@@ -53,7 +57,13 @@ hot path.
 
 ### Verified by hand
 
-- A marble rolled into a wall in a game built on this does not stick or shake.
+Run `cargo run --example rolling` in blitkit, which draws every collider exactly
+where it collides, so a mismatch between what is seen and what is hit shows up.
+
+- A ball driven straight into a wall stops against it, without sticking,
+  shuddering or passing through.
+- Driven diagonally, it slides along rather than stopping dead.
+- Wedged into a corner, it settles quietly instead of vibrating.
 
 ## Out of scope
 

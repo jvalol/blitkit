@@ -16,8 +16,9 @@ A `Mesh` owns a vertex buffer and an index buffer on the GPU, built once from
 vertex and index data rather than rebuilt every frame the way quads are. Meshes
 are long lived: a game builds one and draws it many times.
 
-The engine ships a cube and a plane, so a game can see something without
-supplying geometry.
+The engine ships a cube, a plane and a sphere, so a game can see something
+without supplying geometry. The sphere takes a segment and ring count, since how
+round it needs to be is the game's call.
 
 **Drawing.** A game uploads meshes once in `Game::load` and pushes a mesh and a
 transform into the `Scene` each frame in `Game::draw`, the same shape as
@@ -45,6 +46,7 @@ several glTF wants.
 - The vertex layout's offsets match too. — `mesh::tests::vertex_has_position_normal_and_uv`
 - A mesh loaded without normals gets them computed. — `mesh::tests::computes_missing_normals`
 - The built-in plane faces up. — `mesh::tests::the_plane_faces_up`
+- The built-in sphere is round, with normals pointing out. — `mesh::tests::the_sphere_is_round`
 - An OBJ file loads into vertices and indices. — `mesh::tests::loads_an_obj_file`
 
 ### Verified by hand

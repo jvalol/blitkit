@@ -52,6 +52,15 @@ impl MeshData {
         self.indices.len() / 3
     }
 
+    /// The box this mesh fits inside, so a game can build a collider from what
+    /// it draws rather than typing the numbers twice. See spec 0014.
+    pub fn bounds(&self) -> crate::collision::Aabb {
+        self.vertices.iter().fold(
+            crate::collision::Aabb::empty(),
+            |bounds, vertex| bounds.union_point(Vec3::from(vertex.position)),
+        )
+    }
+
     /// A unit cube centered on the origin, with a normal per face rather than
     /// per corner, so its edges stay sharp. That means four vertices per face
     /// instead of eight shared corners.
@@ -89,6 +98,52 @@ impl MeshData {
             // counter-clockwise seen from outside, which is what the back face
             // culling in spec 0009 expects
             indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+
+        Self::new(vertices, indices)
+    }
+
+    /// A unit sphere centered on the origin, built as rings of quads. Normals
+    /// point straight out, which is what makes it read as round under the
+    /// lighting in spec 0012.
+    pub fn sphere(segments: u32, rings: u32) -> Self {
+        let segments = segments.max(3);
+        let rings = rings.max(2);
+
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        for ring in 0..=rings {
+            // from the north pole down
+            let phi = std::f32::consts::PI * ring as f32 / rings as f32;
+            for segment in 0..=segments {
+                let theta = std::f32::consts::TAU * segment as f32 / segments as f32;
+                let normal = Vec3::new(
+                    phi.sin() * theta.cos(),
+                    phi.cos(),
+                    phi.sin() * theta.sin(),
+                );
+
+                vertices.push(Vertex::new(
+                    (normal * 0.5).to_array(),
+                    normal.to_array(),
+                    [
+                        segment as f32 / segments as f32,
+                        ring as f32 / rings as f32,
+                    ],
+                ));
+            }
+        }
+
+        let stride = segments + 1;
+        for ring in 0..rings {
+            for segment in 0..segments {
+                let a = ring * stride + segment;
+                let b = a + stride;
+
+                // counter-clockwise from outside, per spec 0009
+                indices.extend_from_slice(&[a, b, b + 1, a, b + 1, a + 1]);
+            }
         }
 
         Self::new(vertices, indices)
@@ -297,6 +352,38 @@ mod tests {
             let normal = Vec3::from(vertex.normal);
             assert!(position.dot(normal) > 0.0);
         }
+    }
+
+    #[test]
+    fn a_mesh_knows_its_bounds() {
+        let bounds = MeshData::cube().bounds();
+
+        assert!((bounds.min - Vec3::splat(-0.5)).length() < 1e-5, "{:?}", bounds);
+        assert!((bounds.max - Vec3::splat(0.5)).length() < 1e-5, "{:?}", bounds);
+
+        // the plane is flat, so its box has no height
+        let plane = MeshData::plane().bounds();
+        assert_eq!(plane.size().y, 0.0);
+        assert_eq!(plane.size().x, 1.0);
+    }
+
+    #[test]
+    fn the_sphere_is_round() {
+        let sphere = MeshData::sphere(16, 8);
+
+        for vertex in sphere.vertices.iter() {
+            let position = Vec3::from(vertex.position);
+            let normal = Vec3::from(vertex.normal);
+
+            // every point is the same distance from the middle
+            assert!((position.length() - 0.5).abs() < 1e-4, "{:?}", vertex);
+            // and its normal points straight out from there
+            assert!((normal.length() - 1.0).abs() < 1e-4, "{:?}", vertex);
+            assert!(position.normalize().dot(normal) > 0.999, "{:?}", vertex);
+        }
+
+        assert_eq!(sphere.triangle_count(), 16 * 8 * 2);
+        assert!((sphere.bounds().size() - Vec3::ONE).length() < 1e-4);
     }
 
     #[test]
