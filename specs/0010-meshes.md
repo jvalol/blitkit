@@ -51,7 +51,7 @@ several glTF wants.
 
 ### Verified by hand
 
-Run `cargo run --example cubes` in blitkit. The camera orbits on its own.
+Run `cargo run --example cubes` in blitzkit. The camera orbits on its own.
 
 - The cube looks like a cube from every angle, with no glimpses of its inside.
 - The near cube covers the far one although it is pushed later, which is depth

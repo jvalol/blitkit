@@ -57,7 +57,7 @@ hand.
 
 ### Verified by hand
 
-Run `cargo run --example rolling` or `cargo run --example cubes` in blitkit.
+Run `cargo run --example rolling` or `cargo run --example cubes` in blitzkit.
 Rolling is the better test of a shadow staying under a moving thing; cubes is
 the better test of resting against floating, since its cubes hover.
 

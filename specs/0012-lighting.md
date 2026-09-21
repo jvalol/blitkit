@@ -46,7 +46,7 @@ hand checks below.
 
 ### Verified by hand
 
-Run `cargo run --example cubes` in blitkit.
+Run `cargo run --example cubes` in blitzkit.
 
 - A lit cube reads as a cube, with visibly different faces.
 - The highlight slides across the pale cube, which has a shininess of 128, as the

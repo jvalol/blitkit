@@ -32,7 +32,7 @@ convention and world space is a 3D convention, and the projection matrix is wher
 one becomes the other. Anything drawing in pixels keeps y down.
 
 **Migration.** This is a breaking change to the public API, so it ships as
-blitkit 0.2.0 and the three games move with it. The change is mechanical:
+blitzkit 0.2.0 and the three games move with it. The change is mechanical:
 `cgmath::Vector2<f32>` becomes `glam::Vec2`, `Vector4<f32>` becomes `Vec4`, and
 construction goes from `(x, y).into()` to `vec2(x, y)`. cgmath leaves the
 dependency list.

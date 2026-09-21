@@ -85,7 +85,7 @@ hot path.
 
 ### Verified by hand
 
-Run `cargo run --example rolling` in blitkit, which draws every collider exactly
+Run `cargo run --example rolling` in blitzkit, which draws every collider exactly
 where it collides, so a mismatch between what is seen and what is hit shows up.
 
 - A ball driven straight into a wall stops against it, without sticking,

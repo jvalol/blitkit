@@ -9,17 +9,17 @@
 //! Drag with the left button to turn, scroll to move closer or further, and
 //! press space to lock the cursor so turning never stops at the screen edge.
 
-use blitkit::camera::Camera;
-use blitkit::geometry::Geometry;
-use blitkit::keyboard::{KeyboardInput, KeyboardKey, KeyboardKeyState};
-use blitkit::mesh::{MeshData, Transform};
-use blitkit::mouse::{MouseButton, MouseInput};
-use blitkit::renderer::render_text::{RenderText, TextRenderer};
-use blitkit::renderer::scene::{MeshId, Scene, TextureId};
-use blitkit::renderer::Renderer;
-use blitkit::sound::SoundSystem;
-use blitkit::texture::TextureData;
-use blitkit::{start, Game};
+use blitzkit::camera::Camera;
+use blitzkit::geometry::Geometry;
+use blitzkit::keyboard::{KeyboardInput, KeyboardKey, KeyboardKeyState};
+use blitzkit::mesh::{MeshData, Transform};
+use blitzkit::mouse::{MouseButton, MouseInput};
+use blitzkit::renderer::render_text::{RenderText, TextRenderer};
+use blitzkit::renderer::scene::{MeshId, Scene, TextureId};
+use blitzkit::renderer::Renderer;
+use blitzkit::sound::SoundSystem;
+use blitzkit::texture::TextureData;
+use blitzkit::{start, Game};
 use glam::{vec3, vec4, Quat, Vec3};
 
 const CHECKER: &[u8] = include_bytes!("../res/textures/checker.png");
@@ -233,5 +233,5 @@ impl Game for Cubes {
 }
 
 fn main() {
-    start("blitkit: cubes", Box::new(Cubes::new()));
+    start("blitzkit: cubes", Box::new(Cubes::new()));
 }

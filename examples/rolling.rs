@@ -6,17 +6,17 @@
 //! WASD or the arrows roll the ball, the camera follows it, drag or move the
 //! mouse to swing the camera around, scroll to zoom, and escape quits.
 
-use blitkit::camera::Camera;
-use blitkit::collision::{move_and_slide, Aabb, Sphere};
-use blitkit::geometry::Geometry;
-use blitkit::keyboard::{KeyboardInput, KeyboardKey, KeyboardKeyState};
-use blitkit::mesh::{MeshData, Transform};
-use blitkit::mouse::{MouseButton, MouseInput};
-use blitkit::renderer::render_text::{RenderText, TextRenderer};
-use blitkit::renderer::scene::{MeshId, Scene};
-use blitkit::renderer::Renderer;
-use blitkit::sound::SoundSystem;
-use blitkit::{start, Game};
+use blitzkit::camera::Camera;
+use blitzkit::collision::{move_and_slide, Aabb, Sphere};
+use blitzkit::geometry::Geometry;
+use blitzkit::keyboard::{KeyboardInput, KeyboardKey, KeyboardKeyState};
+use blitzkit::mesh::{MeshData, Transform};
+use blitzkit::mouse::{MouseButton, MouseInput};
+use blitzkit::renderer::render_text::{RenderText, TextRenderer};
+use blitzkit::renderer::scene::{MeshId, Scene};
+use blitzkit::renderer::Renderer;
+use blitzkit::sound::SoundSystem;
+use blitzkit::{start, Game};
 use glam::{vec3, vec4, Vec3};
 
 const BALL_RADIUS: f32 = 0.5;
@@ -206,5 +206,5 @@ impl Game for Rolling {
 }
 
 fn main() {
-    start("blitkit: rolling", Box::new(Rolling::new()));
+    start("blitzkit: rolling", Box::new(Rolling::new()));
 }

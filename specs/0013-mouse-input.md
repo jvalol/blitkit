@@ -51,7 +51,7 @@ what the mouse did.
 
 ### Verified by hand
 
-Run `cargo run --example cubes` in blitkit.
+Run `cargo run --example cubes` in blitzkit.
 
 - The cursor position printed under the help line follows the pointer.
 - Dragging with the left button turns the camera, and scrolling moves it closer

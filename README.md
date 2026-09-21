@@ -1,4 +1,4 @@
-# blitkit
+# blitzkit
 In which I develop a wrapper around wgpu-rs to create a graphics development engine in rust.
 
 I'm currently simultaneously developing a Pong game using this engine, which is also a public repo. 

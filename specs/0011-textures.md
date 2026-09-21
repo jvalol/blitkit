@@ -46,7 +46,7 @@ samples is the hand check below.
 
 ### Verified by hand
 
-Run `cargo run --example cubes` in blitkit.
+Run `cargo run --example cubes` in blitzkit.
 
 - The floor's checkerboard shows its red corner patch once, the right way up,
   which would look wrong if the texture were mirrored or rotated.
