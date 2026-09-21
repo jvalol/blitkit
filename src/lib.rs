@@ -194,6 +194,31 @@ impl ApplicationHandler for App {
 mod tests {
     use super::*;
 
+    /// wgpu's clip space runs depth from 0 at the near plane to 1 at the far
+    /// plane, unlike OpenGL, and its NDC is y-up, unlike Vulkan's. glam splits
+    /// its projections by convention, and the `directx` module is the one that
+    /// matches, which is why nothing here carries a correction matrix. See
+    /// `specs/0007-math-types.md`.
+    #[test]
+    fn glam_projection_matches_wgpu_clip_space() {
+        let projection = glam::camera::rh::proj::directx::perspective(1.0, 16.0 / 9.0, 0.1, 100.0);
+
+        // looking down -z, so the planes are in front of the camera
+        let near = projection * glam::vec4(0.0, 0.0, -0.1, 1.0);
+        let far = projection * glam::vec4(0.0, 0.0, -100.0, 1.0);
+
+        assert!(
+            (near.z / near.w - 0.0).abs() < 1e-5,
+            "near was {}",
+            near.z / near.w
+        );
+        assert!(
+            (far.z / far.w - 1.0).abs() < 1e-5,
+            "far was {}",
+            far.z / far.w
+        );
+    }
+
     #[test]
     fn clamp_delta_time_passes_normal_frames() {
         // 60 fps and 120 fps

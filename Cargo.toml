@@ -1,6 +1,6 @@
 [package]
 name = "blitkit"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Jake Van Alstyne 🎩 <jake.van.alstyne@hey.com>"]
 edition = "2018"
 rust-version = "1.87"
@@ -15,7 +15,7 @@ categories = ["game-engines", "graphics"]
 
 [dependencies]
 winit = "0.30"
-cgmath = "0.17"
+glam = { version = "0.33", features = ["bytemuck"] }
 env_logger = "0.11"
 log = "0.4"
 wgpu = "30"

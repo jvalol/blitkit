@@ -4,21 +4,16 @@
 /// `color` is linear RGBA in the 0 to 1 range, and defaults to opaque white.
 #[derive(Debug, Copy, Clone)]
 pub struct Quad {
-    pub position: cgmath::Vector2<f32>,
-    pub size: cgmath::Vector2<f32>,
-    pub color: cgmath::Vector4<f32>,
+    pub position: glam::Vec2,
+    pub size: glam::Vec2,
+    pub color: glam::Vec4,
 }
 
 /// Opaque white, what a quad is drawn in unless it says otherwise.
-pub const WHITE: cgmath::Vector4<f32> = cgmath::Vector4 {
-    x: 1.0,
-    y: 1.0,
-    z: 1.0,
-    w: 1.0,
-};
+pub const WHITE: glam::Vec4 = glam::Vec4::ONE;
 
 impl Quad {
-    pub fn new(position: cgmath::Vector2<f32>, size: cgmath::Vector2<f32>) -> Quad {
+    pub fn new(position: glam::Vec2, size: glam::Vec2) -> Quad {
         Quad {
             position,
             size,
@@ -26,11 +21,7 @@ impl Quad {
         }
     }
 
-    pub fn colored(
-        position: cgmath::Vector2<f32>,
-        size: cgmath::Vector2<f32>,
-        color: cgmath::Vector4<f32>,
-    ) -> Quad {
+    pub fn colored(position: glam::Vec2, size: glam::Vec2, color: glam::Vec4) -> Quad {
         Quad {
             position,
             size,

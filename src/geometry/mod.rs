@@ -37,20 +37,20 @@ impl Geometry {
 
         self.vertex_data.extend(&[
             vertex::Vertex {
-                position: (min_x, min_y).into(),
-                color: quad.color,
+                position: [min_x, min_y],
+                color: quad.color.to_array(),
             },
             vertex::Vertex {
-                position: (max_x, min_y).into(),
-                color: quad.color,
+                position: [max_x, min_y],
+                color: quad.color.to_array(),
             },
             vertex::Vertex {
-                position: (max_x, max_y).into(),
-                color: quad.color,
+                position: [max_x, max_y],
+                color: quad.color.to_array(),
             },
             vertex::Vertex {
-                position: (min_x, max_y).into(),
-                color: quad.color,
+                position: [min_x, max_y],
+                color: quad.color.to_array(),
             },
         ]);
         self.index_data.extend(&[
@@ -81,7 +81,7 @@ mod tests {
         geometry
             .vertex_data()
             .iter()
-            .map(|vertex| (vertex.position.x, vertex.position.y))
+            .map(|vertex| (vertex.position[0], vertex.position[1]))
             .collect()
     }
 
@@ -100,13 +100,27 @@ mod tests {
     #[test]
     fn push_quad_carries_its_color_to_every_vertex() {
         let mut geometry = Geometry::new();
-        let red = cgmath::Vector4::new(1.0, 0.0, 0.0, 1.0);
+        let red = glam::vec4(1.0, 0.0, 0.0, 1.0);
         geometry.push_quad(&Quad::colored((0.0, 0.0).into(), (2.0, 2.0).into(), red));
 
         assert!(geometry
             .vertex_data()
             .iter()
-            .all(|vertex| vertex.color == red));
+            .all(|vertex| vertex.color == red.to_array()));
+    }
+
+    #[test]
+    fn quads_use_glam_types() {
+        let quad = Quad::colored(
+            glam::vec2(10.0, 20.0),
+            glam::vec2(4.0, 4.0),
+            glam::vec4(0.0, 1.0, 0.0, 1.0),
+        );
+
+        assert_eq!(quad.position, glam::Vec2::new(10.0, 20.0));
+        assert_eq!(quad.size.x, 4.0);
+        assert_eq!(quad.color.y, 1.0);
+        assert_eq!(quad::WHITE, glam::Vec4::ONE);
     }
 
     #[test]
@@ -117,7 +131,7 @@ mod tests {
         assert!(geometry
             .vertex_data()
             .iter()
-            .all(|vertex| vertex.color == quad::WHITE));
+            .all(|vertex| vertex.color == quad::WHITE.to_array()));
     }
 
     #[test]
