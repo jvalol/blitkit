@@ -9,6 +9,8 @@ struct Uniforms {
     light_color: vec4<f32>,
     // rgb fills the side facing away, a is unused padding
     ambient: vec4<f32>,
+    // world to the light's clip space, for the shadow map
+    light_view_projection: mat4x4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -16,6 +18,43 @@ struct Uniforms {
 // White by default, so an untextured mesh multiplies by one, per spec 0011.
 @group(1) @binding(0) var surface_texture: texture_2d<f32>;
 @group(1) @binding(1) var surface_sampler: sampler;
+
+// What the light can see, per spec 0015.
+@group(2) @binding(0) var shadow_map: texture_depth_2d;
+@group(2) @binding(1) var shadow_sampler: sampler_comparison;
+
+const MIN_BIAS: f32 = 0.0005;
+const MAX_BIAS: f32 = 0.004;
+
+// Matches shadow::is_lit and shadow::bias in Rust. Keep the two in step.
+fn shadow_factor(world_position: vec3<f32>, normal: vec3<f32>, to_light: vec3<f32>) -> f32 {
+    let clip = uniforms.light_view_projection * vec4<f32>(world_position, 1.0);
+    if clip.w <= 0.0 {
+        return 1.0;
+    }
+
+    let ndc = clip.xyz / clip.w;
+    // outside the map is lit, not dark: wrong in the forgiving direction
+    if abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 || ndc.z < 0.0 || ndc.z > 1.0 {
+        return 1.0;
+    }
+
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, ndc.y * -0.5 + 0.5);
+    let facing = clamp(dot(normal, to_light), 0.0, 1.0);
+    let bias = MIN_BIAS + MAX_BIAS * (1.0 - facing);
+
+    // nine samples in a small square, so edges are soft rather than stepped
+    let texel = 1.0 / f32(textureDimensions(shadow_map).x);
+    var lit = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel;
+            lit += textureSampleCompare(shadow_map, shadow_sampler, uv + offset, ndc.z - bias);
+        }
+    }
+
+    return lit / 9.0;
+}
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -74,10 +113,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         specular = light * pow(max(dot(normal, half_vector), 0.0), max(in.shininess, 1.0));
     }
 
+    // shadow dims what the light contributes, never the ambient fill
+    let lit = shadow_factor(in.world_position, normal, to_light);
+
     // the instance color tints what is sampled rather than replacing it
     let sampled = textureSample(surface_texture, surface_sampler, in.uv);
     let base = in.color * sampled;
 
-    let shaded = base.rgb * (uniforms.ambient.rgb + diffuse) + specular;
+    let shaded = base.rgb * (uniforms.ambient.rgb + diffuse * lit) + specular * lit;
     return vec4<f32>(shaded, base.a);
 }

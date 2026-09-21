@@ -6,6 +6,7 @@ pub mod lighting;
 pub mod mesh;
 pub mod mouse;
 pub mod renderer;
+pub mod shadow;
 pub mod sound;
 pub mod texture;
 

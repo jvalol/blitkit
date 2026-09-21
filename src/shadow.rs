@@ -1,0 +1,218 @@
+//! Shadow mapping from the one directional light.
+//!
+//! See `specs/0015-shadows.md`. The matrix, the bias and the comparison rule
+//! live here as plain maths so they can be checked without a GPU. The same
+//! comparison runs in `mesh.wgsl`, and the two are kept in step by hand.
+
+use crate::collision::Aabb;
+use glam::{Mat4, Vec3, Vec4Swizzles};
+
+/// How wide the shadow map is, in pixels. Bigger is sharper and slower.
+pub const MAP_SIZE: u32 = 2048;
+
+pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// The shadow a surface facing the light gets, before its angle is considered.
+pub const MIN_BIAS: f32 = 0.0005;
+/// The most bias a surface turned edge-on to the light gets. Too little stripes
+/// lit surfaces, too much lifts a shadow off what casts it.
+pub const MAX_BIAS: f32 = 0.004;
+
+/// What the light's view covers when a game has not said otherwise.
+pub fn default_bounds() -> Aabb {
+    Aabb::from_center_size(Vec3::ZERO, Vec3::splat(40.0))
+}
+
+/// One matrix taking a world position into the light's clip space, fitted so
+/// `bounds` fills the map and nothing outside it is recorded.
+///
+/// The light has no position, being directional, so the view is placed far
+/// enough back to hold the whole box in front of it.
+pub fn light_view_projection(direction: Vec3, bounds: &Aabb) -> Mat4 {
+    let direction = direction.normalize_or_zero();
+    let direction = if direction.length_squared() < 0.5 {
+        Vec3::NEG_Y
+    } else {
+        direction
+    };
+
+    let center = bounds.center();
+    let radius = (bounds.size().length() * 0.5).max(1e-3);
+    // straight down would make the usual up vector useless
+    let up = if direction.dot(Vec3::Y).abs() > 0.99 {
+        Vec3::Z
+    } else {
+        Vec3::Y
+    };
+
+    let eye = center - direction * radius * 2.0;
+    let view = glam::camera::rh::view::look_at_mat4(eye, center, up);
+
+    // fit the box exactly, in the light's own space
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for corner in corners(bounds) {
+        let in_light = (view * corner.extend(1.0)).xyz();
+        min = min.min(in_light);
+        max = max.max(in_light);
+    }
+
+    // the light looks down -z, so what is in front has negative z
+    let near = (-max.z).max(0.0);
+    let far = -min.z;
+
+    glam::camera::rh::proj::directx::orthographic(min.x, max.x, min.y, max.y, near, far)
+        * view
+}
+
+fn corners(bounds: &Aabb) -> [Vec3; 8] {
+    let (min, max) = (bounds.min, bounds.max);
+    [
+        Vec3::new(min.x, min.y, min.z),
+        Vec3::new(max.x, min.y, min.z),
+        Vec3::new(min.x, max.y, min.z),
+        Vec3::new(max.x, max.y, min.z),
+        Vec3::new(min.x, min.y, max.z),
+        Vec3::new(max.x, min.y, max.z),
+        Vec3::new(min.x, max.y, max.z),
+        Vec3::new(max.x, max.y, max.z),
+    ]
+}
+
+/// Where a world position lands on the shadow map: texture coordinates and the
+/// depth to compare, or `None` when it falls outside the map.
+///
+/// Outside means lit, not dark: wrong in the forgiving direction.
+pub fn map_position(light_view_projection: Mat4, world: Vec3) -> Option<(f32, f32, f32)> {
+    let clip = light_view_projection * world.extend(1.0);
+    if clip.w <= 0.0 {
+        return None;
+    }
+
+    let ndc = clip.xyz() / clip.w;
+    if ndc.x < -1.0 || ndc.x > 1.0 || ndc.y < -1.0 || ndc.y > 1.0 || ndc.z < 0.0 || ndc.z > 1.0 {
+        return None;
+    }
+
+    // clip space is y up, texture coordinates are y down
+    Some((ndc.x * 0.5 + 0.5, ndc.y * -0.5 + 0.5, ndc.z))
+}
+
+/// How much to forgive a depth comparison, given how square-on the surface is
+/// to the light. An edge-on surface records depths its own fragments fail
+/// against, which stripes it with false shadow.
+pub fn bias(normal: Vec3, to_light: Vec3) -> f32 {
+    let facing = normal.normalize_or_zero().dot(to_light.normalize_or_zero());
+    MIN_BIAS + MAX_BIAS * (1.0 - facing.clamp(0.0, 1.0))
+}
+
+/// The comparison itself: is this fragment nearer the light than whatever the
+/// map recorded there?
+pub fn is_lit(recorded_depth: f32, fragment_depth: f32, bias: f32) -> bool {
+    fragment_depth - bias <= recorded_depth
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::vec3;
+
+    fn light() -> Vec3 {
+        vec3(-0.3, -1.0, -0.4).normalize()
+    }
+
+    #[test]
+    fn the_bounds_fit_in_the_light_view() {
+        let bounds = default_bounds();
+        let matrix = light_view_projection(light(), &bounds);
+
+        for corner in corners(&bounds) {
+            let clip = matrix * corner.extend(1.0);
+            let ndc = clip.xyz() / clip.w;
+
+            assert!(ndc.x.abs() <= 1.0 + 1e-4, "x {} for {:?}", ndc.x, corner);
+            assert!(ndc.y.abs() <= 1.0 + 1e-4, "y {} for {:?}", ndc.y, corner);
+            assert!(
+                (-1e-4..=1.0 + 1e-4).contains(&ndc.z),
+                "z {} for {:?}",
+                ndc.z,
+                corner
+            );
+        }
+    }
+
+    #[test]
+    fn light_space_depth_matches_wgpu() {
+        let bounds = Aabb::from_center_size(Vec3::ZERO, Vec3::splat(10.0));
+        // straight down, so depth follows height
+        let matrix = light_view_projection(Vec3::NEG_Y, &bounds);
+
+        let high = map_position(matrix, vec3(0.0, 4.0, 0.0)).expect("inside the map");
+        let low = map_position(matrix, vec3(0.0, -4.0, 0.0)).expect("inside the map");
+
+        // nearer the light is a smaller depth, and both are within 0 to 1
+        assert!(high.2 < low.2, "high {} low {}", high.2, low.2);
+        assert!((0.0..=1.0).contains(&high.2));
+        assert!((0.0..=1.0).contains(&low.2));
+    }
+
+    #[test]
+    fn nearer_than_the_map_is_lit() {
+        // the map says something is at 0.5; this fragment is in front of it
+        assert!(is_lit(0.5, 0.4, MIN_BIAS));
+    }
+
+    #[test]
+    fn further_than_the_map_is_shadowed() {
+        assert!(!is_lit(0.5, 0.6, MIN_BIAS));
+        // and the bias does not forgive a difference that large
+        assert!(!is_lit(0.5, 0.6, MAX_BIAS));
+    }
+
+    #[test]
+    fn the_bias_forgives_a_surface_against_itself() {
+        // the same depth, give or take the wobble that causes acne
+        assert!(is_lit(0.5, 0.5 + MIN_BIAS * 0.5, MIN_BIAS));
+    }
+
+    #[test]
+    fn outside_the_map_is_lit() {
+        let bounds = Aabb::from_center_size(Vec3::ZERO, Vec3::splat(10.0));
+        let matrix = light_view_projection(Vec3::NEG_Y, &bounds);
+
+        // well outside the box the map covers
+        assert!(map_position(matrix, vec3(500.0, 0.0, 0.0)).is_none());
+        assert!(map_position(matrix, vec3(0.0, 0.0, -500.0)).is_none());
+        // and inside it is on the map
+        assert!(map_position(matrix, Vec3::ZERO).is_some());
+    }
+
+    #[test]
+    fn the_bias_grows_with_the_angle() {
+        let to_light = Vec3::Y;
+
+        let square_on = bias(Vec3::Y, to_light);
+        let tilted = bias(vec3(1.0, 1.0, 0.0).normalize(), to_light);
+        let edge_on = bias(Vec3::X, to_light);
+
+        assert!(square_on < tilted, "{} {}", square_on, tilted);
+        assert!(tilted < edge_on, "{} {}", tilted, edge_on);
+        assert!((square_on - MIN_BIAS).abs() < 1e-6);
+        assert!((edge_on - (MIN_BIAS + MAX_BIAS)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn moving_the_light_moves_its_view() {
+        let bounds = default_bounds();
+        let from_above = light_view_projection(Vec3::NEG_Y, &bounds);
+        let from_the_side = light_view_projection(vec3(-1.0, -0.2, 0.0).normalize(), &bounds);
+
+        assert_ne!(from_above, from_the_side);
+
+        // a tall post's shadow lands somewhere different
+        let top = vec3(0.0, 5.0, 0.0);
+        let overhead = map_position(from_above, top).expect("inside");
+        let sideways = map_position(from_the_side, top).expect("inside");
+        assert!((overhead.0 - sideways.0).abs() > 0.01 || (overhead.1 - sideways.1).abs() > 0.01);
+    }
+}

@@ -6,6 +6,8 @@ use crate::camera::Camera;
 use crate::geometry::vertex::*;
 use crate::lighting::Light;
 use crate::mesh::MeshData;
+use crate::collision::Aabb;
+use crate::shadow;
 use crate::texture::TextureData;
 use scene::{Instance, MeshId, Scene, TextureId};
 use crate::geometry::Geometry;
@@ -50,6 +52,11 @@ pub struct Renderer {
     mesh_pipeline: wgpu::RenderPipeline,
     meshes: Vec<GpuMesh>,
     textures: Vec<wgpu::BindGroup>,
+    shadow_pipeline: wgpu::RenderPipeline,
+    shadow_view: wgpu::TextureView,
+    shadow_bind_group: wgpu::BindGroup,
+    /// What the light's view covers. A game sets it to fit its world.
+    scene_bounds: Aabb,
     texture_bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     /// Grown as needed, like the quad buffers.
@@ -129,7 +136,11 @@ impl Renderer {
         camera.set_viewport(config.width as f32, config.height as f32);
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Scene Uniform"),
-            contents: bytemuck::cast_slice(&[SceneUniform::new(&camera, &Light::new())]),
+            contents: bytemuck::cast_slice(&[SceneUniform::new(
+                &camera,
+                &Light::new(),
+                &shadow::default_bounds(),
+            )]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let camera_bind_group_layout = uniform_bind_group_layout(
@@ -192,11 +203,76 @@ impl Renderer {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
+        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Shadow Map"),
+            size: wgpu::Extent3d {
+                width: shadow::MAP_SIZE,
+                height: shadow::MAP_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: shadow::FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        // a comparison sampler returns how much of the sample passed the depth
+        // test rather than a depth, which is what makes the edges soft
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Shadow Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        let shadow_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Shadow Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                        count: None,
+                    },
+                ],
+            });
+        let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Shadow Bind Group"),
+            layout: &shadow_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+            ],
+        });
+        let shadow_pipeline = create_shadow_pipeline(&device, &camera_bind_group_layout);
         let mesh_pipeline = create_mesh_pipeline(
             &device,
             config.format,
             &camera_bind_group_layout,
             &texture_bind_group_layout,
+            &shadow_bind_group_layout,
         );
         let instance_buffer = create_buffer(&device, 0, wgpu::BufferUsages::VERTEX);
 
@@ -221,6 +297,10 @@ impl Renderer {
             mesh_pipeline,
             meshes: Vec::new(),
             textures: Vec::new(),
+            shadow_pipeline,
+            shadow_view,
+            shadow_bind_group,
+            scene_bounds: shadow::default_bounds(),
             texture_bind_group_layout,
             sampler,
             instance_buffer,
@@ -317,6 +397,16 @@ impl Renderer {
         MeshId(self.meshes.len() - 1)
     }
 
+    /// What the shadow map covers. A world bigger than this gets no shadows
+    /// outside it, per spec 0015; smaller bounds give sharper shadows.
+    pub fn set_scene_bounds(&mut self, bounds: Aabb) {
+        self.scene_bounds = bounds;
+    }
+
+    pub fn scene_bounds(&self) -> Aabb {
+        self.scene_bounds
+    }
+
     /// Hides the pointer and pins it, so turning does not stop at the screen
     /// edge. If the platform refuses, this says so and leaves the cursor
     /// visible: raw mouse motion arrives either way, so looking around still
@@ -406,7 +496,11 @@ impl Renderer {
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
-            bytemuck::cast_slice(&[SceneUniform::new(&self.camera, &scene.light)]),
+            bytemuck::cast_slice(&[SceneUniform::new(
+                &self.camera,
+                &scene.light,
+                &self.scene_bounds,
+            )]),
         );
         self.upload_geometry(geometry);
 
@@ -427,7 +521,37 @@ impl Renderer {
 
         let batches = self.upload_instances(scene);
 
-        // the world first, depth tested, then the interface painted on top
+        // what the light can see, first of all
+        {
+            let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Shadow Pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.shadow_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            shadow_pass.set_pipeline(&self.shadow_pipeline);
+            shadow_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            shadow_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+
+            for (mesh_id, _, first, count) in batches.iter() {
+                let mesh = &self.meshes[mesh_id.0];
+                shadow_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                shadow_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                shadow_pass.draw_indexed(0..mesh.index_count, 0, *first..(*first + *count));
+            }
+        }
+
+        // the world next, depth tested, then the interface painted on top
         {
             let mut mesh_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Mesh Pass"),
@@ -460,6 +584,7 @@ impl Renderer {
             for (mesh_id, texture_id, first, count) in batches.iter() {
                 let mesh = &self.meshes[mesh_id.0];
                 mesh_pass.set_bind_group(1, &self.textures[texture_id.0], &[]);
+                mesh_pass.set_bind_group(2, &self.shadow_bind_group, &[]);
                 mesh_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 mesh_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 mesh_pass.draw_indexed(0..mesh.index_count, 0, *first..(*first + *count));
@@ -596,30 +721,79 @@ struct SceneUniform {
     /// rgb is the color, a is the intensity.
     light_color: [f32; 4],
     ambient: [f32; 4],
+    /// World to the light's clip space, for the shadow map.
+    light_view_projection: [f32; 16],
 }
 
 unsafe impl bytemuck::Pod for SceneUniform {}
 unsafe impl bytemuck::Zeroable for SceneUniform {}
 
 impl SceneUniform {
-    fn new(camera: &Camera, light: &Light) -> Self {
+    fn new(camera: &Camera, light: &Light, bounds: &Aabb) -> Self {
         Self {
             view_projection: camera.view_projection().to_cols_array(),
             camera_position: camera.position.extend(0.0).to_array(),
             light_direction: light.direction.normalize_or_zero().extend(0.0).to_array(),
             light_color: light.color.extend(light.intensity).to_array(),
             ambient: light.ambient.extend(0.0).to_array(),
+            light_view_projection: shadow::light_view_projection(light.direction, bounds)
+                .to_cols_array(),
         }
     }
 }
 
 /// The 3D pipeline: mesh vertices, one instance per copy, the camera uniform,
 /// depth testing and back face culling from spec 0009.
+/// Depth only, from the light. No fragment stage and no color target.
+fn create_shadow_pipeline(
+    device: &wgpu::Device,
+    camera_bind_group_layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::include_wgsl!("../../res/shaders/shadow.wgsl"));
+
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Shadow Pipeline Layout"),
+        bind_group_layouts: &[Some(camera_bind_group_layout)],
+        immediate_size: 0,
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Shadow Pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[Some(crate::mesh::Vertex::DESC), Some(Instance::DESC)],
+            compilation_options: Default::default(),
+        },
+        fragment: None,
+        // front faces are culled instead of back ones, which pushes the
+        // recorded depth to the far side of a wall and hides most acne
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Front),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: shadow::FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 fn create_mesh_pipeline(
     device: &wgpu::Device,
     color_format: wgpu::TextureFormat,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
     texture_bind_group_layout: &wgpu::BindGroupLayout,
+    shadow_bind_group_layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::include_wgsl!("../../res/shaders/mesh.wgsl"));
 
@@ -628,6 +802,7 @@ fn create_mesh_pipeline(
         bind_group_layouts: &[
             Some(camera_bind_group_layout),
             Some(texture_bind_group_layout),
+            Some(shadow_bind_group_layout),
         ],
         immediate_size: 0,
     });
@@ -777,7 +952,8 @@ mod uniform_tests {
     #[test]
     fn the_scene_uniform_is_laid_out_for_the_gpu() {
         // a uniform block wants each field on a 16 byte boundary
-        assert_eq!(std::mem::size_of::<SceneUniform>(), 64 + 16 * 4);
+        assert_eq!(std::mem::size_of::<SceneUniform>(), 64 + 16 * 4 + 64);
+        assert_eq!(std::mem::offset_of!(SceneUniform, light_view_projection), 128);
         assert_eq!(std::mem::offset_of!(SceneUniform, camera_position), 64);
         assert_eq!(std::mem::offset_of!(SceneUniform, light_direction), 80);
         assert_eq!(std::mem::offset_of!(SceneUniform, light_color), 96);
@@ -788,7 +964,7 @@ mod uniform_tests {
     fn the_uniform_carries_the_light() {
         let mut light = Light::new();
         light.intensity = 0.5;
-        let uniform = SceneUniform::new(&Camera::new(), &light);
+        let uniform = SceneUniform::new(&Camera::new(), &light, &shadow::default_bounds());
 
         assert_eq!(uniform.light_color[3], 0.5);
         // pointing down, as the default light comes from above

@@ -1,6 +1,6 @@
 # 0015 Shadows
 
-**Status:** draft
+**Status:** implemented
 **Date:** 2026-09-21
 
 ## Goal
@@ -30,9 +30,13 @@ edges are a few pixels soft rather than stair-stepped.
 
 **Bias.** A surface facing the light nearly edge-on records depths that its own
 fragments fail against, which stripes it with false shadow. The comparison adds
-a small offset that grows with that angle. Too little gives those stripes, too
-much lifts a shadow away from the thing casting it. Both are visible, and the
-hand checks below are how they get caught.
+a small offset that grows with that angle: 0.0005 square-on, rising to 0.0045.
+Too little gives those stripes, too much lifts a shadow away from the thing
+casting it. Both are visible, and the hand checks below are how they get caught.
+
+The shadow pass also culls front faces rather than back ones, which pushes the
+recorded depth to the far side of each wall and hides most acne before the bias
+has to deal with it. That is why these numbers can stay small.
 
 Everything drawn in 3D casts and receives. Quads and text do neither: they are a
 separate pipeline drawn afterwards, per spec 0009.
@@ -53,7 +57,9 @@ hand.
 
 ### Verified by hand
 
-Run `cargo run --example cubes` in blitkit.
+Run `cargo run --example rolling` or `cargo run --example cubes` in blitkit.
+Rolling is the better test of a shadow staying under a moving thing; cubes is
+the better test of resting against floating, since its cubes hover.
 
 - Each cube casts a shadow on the floor, and the spinning one's shadow turns
   with it.
