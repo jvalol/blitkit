@@ -4,6 +4,7 @@
 //! thing it wants drawn, the same shape as `Geometry::push_quad`, and the
 //! renderer batches everything sharing a mesh into one instanced draw.
 
+use crate::lighting::Light;
 use crate::mesh::Transform;
 use glam::Vec4;
 use std::collections::HashMap;
@@ -23,6 +24,8 @@ pub struct Instance {
     /// these are three floats each and not padded out to four.
     pub normal: [[f32; 3]; 3],
     pub color: [f32; 4],
+    /// How tight the specular highlight is, per spec 0012.
+    pub shininess: f32,
 }
 
 unsafe impl bytemuck::Pod for Instance {}
@@ -41,11 +44,15 @@ impl Instance {
             7 => Float32x3,
             8 => Float32x3,
             9 => Float32x3,
-            10 => Float32x4
+            10 => Float32x4,
+            11 => Float32
         ],
     };
 
-    pub fn new(transform: &Transform, color: Vec4) -> Self {
+    /// A surface that is neither mirror nor chalk.
+    pub const DEFAULT_SHININESS: f32 = 32.0;
+
+    pub fn new(transform: &Transform, color: Vec4, shininess: f32) -> Self {
         let normal = transform.normal_matrix();
 
         Self {
@@ -56,6 +63,7 @@ impl Instance {
                 normal.z_axis.to_array(),
             ],
             color: color.to_array(),
+            shininess,
         }
     }
 }
@@ -64,6 +72,8 @@ impl Instance {
 #[derive(Debug, Default)]
 pub struct Scene {
     instances: HashMap<MeshId, Vec<Instance>>,
+    /// The one light in the scene. A game changes it like anything else.
+    pub light: Light,
 }
 
 impl Scene {
@@ -84,10 +94,21 @@ impl Scene {
     }
 
     pub fn push_colored(&mut self, mesh: MeshId, transform: &Transform, color: Vec4) {
+        self.push_material(mesh, transform, color, Instance::DEFAULT_SHININESS);
+    }
+
+    /// Draws `mesh` with a color and a shininess, per spec 0012.
+    pub fn push_material(
+        &mut self,
+        mesh: MeshId,
+        transform: &Transform,
+        color: Vec4,
+        shininess: f32,
+    ) {
         self.instances
             .entry(mesh)
             .or_default()
-            .push(Instance::new(transform, color));
+            .push(Instance::new(transform, color, shininess));
     }
 
     /// Every mesh with something to draw, and its instances. Sorted, so a frame
@@ -135,25 +156,28 @@ mod tests {
     #[test]
     fn an_instance_carries_its_transform_and_color() {
         let transform = Transform::at(Vec3::new(1.0, 2.0, 3.0));
-        let instance = Instance::new(&transform, Vec4::new(1.0, 0.0, 0.0, 1.0));
+        let instance = Instance::new(&transform, Vec4::new(1.0, 0.0, 0.0, 1.0), 8.0);
 
         // translation lives in the last column
         assert_eq!(instance.model[3][0], 1.0);
         assert_eq!(instance.model[3][1], 2.0);
         assert_eq!(instance.model[3][2], 3.0);
         assert_eq!(instance.color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(instance.shininess, 8.0);
     }
 
     #[test]
     fn the_instance_layout_matches_the_struct() {
-        // a 4x4 matrix, three tightly packed columns, then a color
-        assert_eq!(std::mem::size_of::<Instance>(), 64 + 36 + 16);
+        // a 4x4 matrix, three tightly packed columns, a color, a shininess
+        assert_eq!(std::mem::size_of::<Instance>(), 64 + 36 + 16 + 4);
         assert_eq!(std::mem::offset_of!(Instance, normal), 64);
         assert_eq!(std::mem::offset_of!(Instance, color), 100);
 
         let attributes = Instance::DESC.attributes;
         assert_eq!(attributes[4].offset, 64);
         assert_eq!(attributes[7].offset, 100);
+        assert_eq!(std::mem::offset_of!(Instance, shininess), 116);
+        assert_eq!(attributes[8].offset, 116);
         assert_eq!(Instance::DESC.array_stride, Instance::SIZE);
     }
 

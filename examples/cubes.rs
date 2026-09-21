@@ -113,6 +113,14 @@ impl Game for Cubes {
             vec4(0.9, 0.8, 0.2, 1.0),
         );
 
+        // a shinier cube than the rest, to make the highlight obvious
+        scene.push_material(
+            cube,
+            &Transform::at(vec3(1.6, 0.0, 0.0)).with_scale(Vec3::splat(0.7)),
+            vec4(0.8, 0.8, 0.85, 1.0),
+            128.0,
+        );
+
         // the camera orbits whatever the player does, so every side shows
         let orbit = self.angle + self.time * 0.3;
         camera.position = vec3(orbit.sin() * 6.0, self.height, orbit.cos() * 6.0);

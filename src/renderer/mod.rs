@@ -4,6 +4,7 @@ pub mod scene;
 
 use crate::camera::Camera;
 use crate::geometry::vertex::*;
+use crate::lighting::Light;
 use crate::mesh::MeshData;
 use scene::{Instance, MeshId, Scene};
 use crate::geometry::Geometry;
@@ -105,7 +106,8 @@ impl Renderer {
             contents: bytemuck::cast_slice(&screen_size(&config)),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let screen_bind_group_layout = uniform_bind_group_layout(&device, "Screen");
+        let screen_bind_group_layout =
+            uniform_bind_group_layout(&device, "Screen", wgpu::ShaderStages::VERTEX);
         let screen_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Screen Bind Group"),
             layout: &screen_bind_group_layout,
@@ -118,11 +120,15 @@ impl Renderer {
         let mut camera = Camera::new();
         camera.set_viewport(config.width as f32, config.height as f32);
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Uniform"),
-            contents: bytemuck::cast_slice(&camera.view_projection().to_cols_array()),
+            label: Some("Scene Uniform"),
+            contents: bytemuck::cast_slice(&[SceneUniform::new(&camera, &Light::new())]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let camera_bind_group_layout = uniform_bind_group_layout(&device, "Camera");
+        let camera_bind_group_layout = uniform_bind_group_layout(
+            &device,
+            "Scene",
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+        );
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Camera Bind Group"),
             layout: &camera_bind_group_layout,
@@ -251,7 +257,7 @@ impl Renderer {
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
-            bytemuck::cast_slice(&self.camera.view_projection().to_cols_array()),
+            bytemuck::cast_slice(&[SceneUniform::new(&self.camera, &scene.light)]),
         );
         self.upload_geometry(geometry);
 
@@ -420,6 +426,34 @@ fn create_buffer_init(
     })
 }
 
+/// The camera and the light, as the GPU sees them. Every field is padded out
+/// to four floats because that is how a uniform block is laid out.
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+struct SceneUniform {
+    view_projection: [f32; 16],
+    camera_position: [f32; 4],
+    light_direction: [f32; 4],
+    /// rgb is the color, a is the intensity.
+    light_color: [f32; 4],
+    ambient: [f32; 4],
+}
+
+unsafe impl bytemuck::Pod for SceneUniform {}
+unsafe impl bytemuck::Zeroable for SceneUniform {}
+
+impl SceneUniform {
+    fn new(camera: &Camera, light: &Light) -> Self {
+        Self {
+            view_projection: camera.view_projection().to_cols_array(),
+            camera_position: camera.position.extend(0.0).to_array(),
+            light_direction: light.direction.normalize_or_zero().extend(0.0).to_array(),
+            light_color: light.color.extend(light.intensity).to_array(),
+            ambient: light.ambient.extend(0.0).to_array(),
+        }
+    }
+}
+
 /// The 3D pipeline: mesh vertices, one instance per copy, the camera uniform,
 /// depth testing and back face culling from spec 0009.
 fn create_mesh_pipeline(
@@ -469,14 +503,19 @@ fn create_mesh_pipeline(
 /// spec 0001. The 3D pipeline is the one that uses `depth::state()`.
 const QUAD_DEPTH_STENCIL: Option<wgpu::DepthStencilState> = None;
 
-/// A vertex-stage uniform, which is the shape both the screen size and the
-/// camera use.
-fn uniform_bind_group_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
+/// A uniform buffer binding, which is the shape both the screen size and the
+/// scene use. `visibility` matters: the scene uniform carries the light, so the
+/// fragment stage reads it too, and a vertex-only layout fails validation.
+fn uniform_bind_group_layout(
+    device: &wgpu::Device,
+    label: &str,
+    visibility: wgpu::ShaderStages,
+) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some(&format!("{} Bind Group Layout", label)),
         entries: &[wgpu::BindGroupLayoutEntry {
             binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
+            visibility,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
@@ -565,5 +604,31 @@ mod tests {
     fn the_2d_pipeline_ignores_depth() {
         // quads and text keep painting over each other in push order
         assert!(QUAD_DEPTH_STENCIL.is_none());
+    }
+}
+
+#[cfg(test)]
+mod uniform_tests {
+    use super::*;
+
+    #[test]
+    fn the_scene_uniform_is_laid_out_for_the_gpu() {
+        // a uniform block wants each field on a 16 byte boundary
+        assert_eq!(std::mem::size_of::<SceneUniform>(), 64 + 16 * 4);
+        assert_eq!(std::mem::offset_of!(SceneUniform, camera_position), 64);
+        assert_eq!(std::mem::offset_of!(SceneUniform, light_direction), 80);
+        assert_eq!(std::mem::offset_of!(SceneUniform, light_color), 96);
+        assert_eq!(std::mem::offset_of!(SceneUniform, ambient), 112);
+    }
+
+    #[test]
+    fn the_uniform_carries_the_light() {
+        let mut light = Light::new();
+        light.intensity = 0.5;
+        let uniform = SceneUniform::new(&Camera::new(), &light);
+
+        assert_eq!(uniform.light_color[3], 0.5);
+        // pointing down, as the default light comes from above
+        assert!(uniform.light_direction[1] < 0.0);
     }
 }

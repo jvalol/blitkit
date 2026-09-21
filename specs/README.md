@@ -18,6 +18,7 @@ not a priority, and it never changes once a spec exists.
 | [0008](0008-camera.md) | The camera and its matrices |
 | [0009](0009-depth.md) | The depth buffer and back-face culling |
 | [0010](0010-meshes.md) | 3D vertices, meshes, transforms, instancing |
+| [0012](0012-lighting.md) | One directional light, Blinn-Phong shading |
 
 ## Drafted, not built
 
@@ -26,7 +27,6 @@ The 3D work, in the order it would be done. Each one is a draft until it ships.
 | Spec | Covers |
 | --- | --- |
 | [0011](0011-textures.md) | Textures and samplers |
-| [0012](0012-lighting.md) | One directional light, Blinn-Phong shading |
 
-`cargo run --example cubes` draws what 0007 through 0010 built. The two left
-make it look like something.
+`cargo run --example cubes` draws what the 3D specs built so far. Textures are
+the one piece left.
