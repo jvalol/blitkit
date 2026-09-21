@@ -1,6 +1,6 @@
 # 0008 Camera
 
-**Status:** draft
+**Status:** implemented
 **Date:** 2026-09-21
 
 ## Goal
@@ -19,8 +19,14 @@ the same way the screen size uniform already works. The matrices come from
 The aspect ratio comes from the surface and is updated on resize, so the picture
 doesn't stretch. The uniform is written once per frame rather than per object.
 
-A game sets the camera through the renderer. There is no camera controller in the
-engine: a game moves its own camera, the way it moves everything else.
+A game sets the camera through the renderer with `set_camera`, and reads it back
+with `camera()`. There is no camera controller in the engine: a game moves its
+own camera, the way it moves everything else.
+
+The `Game` trait does not hand a game the renderer yet, so nothing can move the
+camera from a game until meshes arrive in spec 0010 and there is something 3D to
+look at. The uniform is written every frame regardless, ready for the pipeline
+that binds it.
 
 **Defaults** so a game can draw something before thinking about cameras: at
 `(0, 1, 5)` looking at the origin, 60 degree field of view, near 0.1, far 100.
@@ -34,7 +40,8 @@ separate pipelines and always have been.
 - A point at the near plane lands at depth 0, at the far plane at 1. — `camera::tests::projection_matches_wgpu_clip_space`
 - Aspect ratio follows the window. — `camera::tests::aspect_follows_the_window`
 - The default camera can see the origin. — `camera::tests::the_default_camera_sees_the_origin`
-- Moving the camera changes the view matrix. — `camera::tests::moving_the_camera_changes_the_view`
+- Panning the camera slides the world across the screen. — `camera::tests::moving_the_camera_changes_the_view`
+- Moving the position alone keeps the target centered, since the camera looks at it. — `camera::tests::the_target_stays_centered_when_the_camera_orbits`
 
 ### Verified by hand
 

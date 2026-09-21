@@ -1,5 +1,6 @@
 pub mod render_text;
 
+use crate::camera::Camera;
 use crate::geometry::vertex::*;
 use crate::geometry::Geometry;
 use render_text::*;
@@ -22,6 +23,14 @@ pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     screen_buffer: wgpu::Buffer,
     screen_bind_group: wgpu::BindGroup,
+    camera: Camera,
+    camera_buffer: wgpu::Buffer,
+    /// Bound by the 3D pipeline, which arrives with meshes in spec 0010.
+    #[allow(dead_code)]
+    camera_bind_group: wgpu::BindGroup,
+    /// Kept so that pipeline can be built against the same layout.
+    #[allow(dead_code)]
+    camera_bind_group_layout: wgpu::BindGroupLayout,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     text_brush: TextBrush<FontRef<'static>>,
@@ -78,26 +87,30 @@ impl Renderer {
             contents: bytemuck::cast_slice(&screen_size(&config)),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let screen_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Screen Bind Group Layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let screen_bind_group_layout = uniform_bind_group_layout(&device, "Screen");
         let screen_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Screen Bind Group"),
             layout: &screen_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: screen_buffer.as_entire_binding(),
+            }],
+        });
+
+        let mut camera = Camera::new();
+        camera.set_viewport(config.width as f32, config.height as f32);
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Camera Uniform"),
+            contents: bytemuck::cast_slice(&camera.view_projection().to_cols_array()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let camera_bind_group_layout = uniform_bind_group_layout(&device, "Camera");
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Camera Bind Group"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
             }],
         });
 
@@ -121,10 +134,25 @@ impl Renderer {
             pipeline,
             screen_buffer,
             screen_bind_group,
+            camera,
+            camera_buffer,
+            camera_bind_group,
+            camera_bind_group_layout,
             vertex_buffer,
             index_buffer,
             text_brush,
         }
+    }
+
+    pub fn camera(&self) -> &Camera {
+        &self.camera
+    }
+
+    /// Games move the camera through this. It takes effect on the next frame.
+    pub fn set_camera(&mut self, camera: Camera) {
+        self.camera = camera;
+        self.camera
+            .set_viewport(self.config.width as f32, self.config.height as f32);
     }
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -140,6 +168,7 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&screen_size(&self.config)),
         );
+        self.camera.set_viewport(self.width(), self.height());
         self.text_brush
             .resize_view(self.width(), self.height(), &self.queue);
     }
@@ -165,6 +194,11 @@ impl Renderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        self.queue.write_buffer(
+            &self.camera_buffer,
+            0,
+            bytemuck::cast_slice(&self.camera.view_projection().to_cols_array()),
+        );
         self.upload_geometry(geometry);
 
         let sections: Vec<Section> = text_renderer
@@ -260,6 +294,24 @@ fn create_buffer_init(
         label: None,
         contents,
         usage: usage | wgpu::BufferUsages::COPY_DST,
+    })
+}
+
+/// A vertex-stage uniform, which is the shape both the screen size and the
+/// camera use.
+fn uniform_bind_group_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some(&format!("{} Bind Group Layout", label)),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
     })
 }
 

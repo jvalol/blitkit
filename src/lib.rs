@@ -1,3 +1,4 @@
+pub mod camera;
 pub mod geometry;
 pub mod keyboard;
 pub mod renderer;
