@@ -100,8 +100,16 @@ mod tests {
         let near = projection * glam::vec4(0.0, 0.0, -camera.near, 1.0);
         let far = projection * glam::vec4(0.0, 0.0, -camera.far, 1.0);
 
-        assert!((near.z / near.w).abs() < 1e-5, "near was {}", near.z / near.w);
-        assert!((far.z / far.w - 1.0).abs() < 1e-5, "far was {}", far.z / far.w);
+        assert!(
+            (near.z / near.w).abs() < 1e-5,
+            "near was {}",
+            near.z / near.w
+        );
+        assert!(
+            (far.z / far.w - 1.0).abs() < 1e-5,
+            "far was {}",
+            far.z / far.w
+        );
     }
 
     #[test]

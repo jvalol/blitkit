@@ -1,3 +1,4 @@
+pub mod depth;
 pub mod render_text;
 
 use crate::camera::Camera;
@@ -34,6 +35,10 @@ pub struct Renderer {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     text_brush: TextBrush<FontRef<'static>>,
+    /// Built here and resized with the surface. The pass that attaches it
+    /// arrives with meshes in spec 0010; quads and text never use it.
+    #[allow(dead_code)]
+    depth: depth::DepthTexture,
 }
 
 impl Renderer {
@@ -126,6 +131,8 @@ impl Renderer {
             config.format,
         );
 
+        let depth = depth::DepthTexture::new(&device, config.width, config.height);
+
         Self {
             surface,
             device,
@@ -141,6 +148,7 @@ impl Renderer {
             vertex_buffer,
             index_buffer,
             text_brush,
+            depth,
         }
     }
 
@@ -168,6 +176,7 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&screen_size(&self.config)),
         );
+        self.depth = depth::DepthTexture::new(&self.device, self.config.width, self.config.height);
         self.camera.set_viewport(self.width(), self.height());
         self.text_brush
             .resize_view(self.width(), self.height(), &self.queue);
@@ -297,6 +306,10 @@ fn create_buffer_init(
     })
 }
 
+/// Quads are drawn in the order they are pushed, with no depth testing, per
+/// spec 0001. The 3D pipeline is the one that uses `depth::state()`.
+const QUAD_DEPTH_STENCIL: Option<wgpu::DepthStencilState> = None;
+
 /// A vertex-stage uniform, which is the shape both the screen size and the
 /// camera use.
 fn uniform_bind_group_layout(device: &wgpu::Device, label: &str) -> wgpu::BindGroupLayout {
@@ -356,7 +369,7 @@ fn create_render_pipeline(
             topology: wgpu::PrimitiveTopology::TriangleList,
             ..Default::default()
         },
-        depth_stencil: None,
+        depth_stencil: QUAD_DEPTH_STENCIL,
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
@@ -383,4 +396,15 @@ fn text_section(text: &RenderText) -> Section<'_> {
                     text.size
                 }),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_2d_pipeline_ignores_depth() {
+        // quads and text keep painting over each other in push order
+        assert!(QUAD_DEPTH_STENCIL.is_none());
+    }
 }

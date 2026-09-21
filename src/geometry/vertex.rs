@@ -37,8 +37,17 @@ mod tests {
         assert_eq!(std::mem::offset_of!(Vertex, color), 8);
 
         let attributes = Vertex::DESC.attributes;
-        assert_eq!(attributes[0].offset, std::mem::offset_of!(Vertex, position) as u64);
-        assert_eq!(attributes[1].offset, std::mem::offset_of!(Vertex, color) as u64);
-        assert_eq!(Vertex::DESC.array_stride, std::mem::size_of::<Vertex>() as u64);
+        assert_eq!(
+            attributes[0].offset,
+            std::mem::offset_of!(Vertex, position) as u64
+        );
+        assert_eq!(
+            attributes[1].offset,
+            std::mem::offset_of!(Vertex, color) as u64
+        );
+        assert_eq!(
+            Vertex::DESC.array_stride,
+            std::mem::size_of::<Vertex>() as u64
+        );
     }
 }
