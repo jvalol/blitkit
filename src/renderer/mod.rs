@@ -22,6 +22,10 @@ use winit::window::Window;
 const FONT_BYTES: &[u8] = include_bytes!("../../res/fonts/PressStart2P-Regular.ttf");
 
 pub struct Renderer {
+    /// Kept so a game can lock or hide the cursor, per spec 0013. The surface
+    /// owns the window too, but does not hand it back.
+    window: Arc<Window>,
+    cursor_locked: bool,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -72,7 +76,7 @@ impl Renderer {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(instance_desc);
-        let surface = instance.create_surface(window).unwrap();
+        let surface = instance.create_surface(window.clone()).unwrap();
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),
@@ -197,6 +201,8 @@ impl Renderer {
         let instance_buffer = create_buffer(&device, 0, wgpu::BufferUsages::VERTEX);
 
         let mut renderer = Self {
+            window,
+            cursor_locked: false,
             surface,
             device,
             queue,
@@ -309,6 +315,41 @@ impl Renderer {
         });
 
         MeshId(self.meshes.len() - 1)
+    }
+
+    /// Hides the pointer and pins it, so turning does not stop at the screen
+    /// edge. If the platform refuses, this says so and leaves the cursor
+    /// visible: raw mouse motion arrives either way, so looking around still
+    /// works.
+    pub fn set_cursor_locked(&mut self, locked: bool) -> bool {
+        let mode = if locked {
+            winit::window::CursorGrabMode::Locked
+        } else {
+            winit::window::CursorGrabMode::None
+        };
+
+        let grabbed = match self.window.set_cursor_grab(mode) {
+            Ok(()) => true,
+            Err(e) if locked => {
+                // some platforms only confine the cursor, which is close enough
+                match self.window.set_cursor_grab(winit::window::CursorGrabMode::Confined) {
+                    Ok(()) => true,
+                    Err(_) => {
+                        log::warn!("could not lock the cursor: {}", e);
+                        false
+                    }
+                }
+            }
+            Err(_) => false,
+        };
+
+        self.window.set_cursor_visible(!locked || !grabbed);
+        self.cursor_locked = locked && grabbed;
+        self.cursor_locked
+    }
+
+    pub fn cursor_locked(&self) -> bool {
+        self.cursor_locked
     }
 
     pub fn camera(&self) -> &Camera {

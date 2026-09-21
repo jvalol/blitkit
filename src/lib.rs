@@ -3,6 +3,7 @@ pub mod geometry;
 pub mod keyboard;
 pub mod lighting;
 pub mod mesh;
+pub mod mouse;
 pub mod renderer;
 pub mod sound;
 pub mod texture;
@@ -17,6 +18,7 @@ use sound::SoundSystem;
 use std::sync::Arc;
 use std::time::Instant;
 
+use glam::{vec2, Vec2};
 use winit::{
     application::ApplicationHandler,
     event::*,
@@ -45,11 +47,28 @@ pub trait Game {
     /// meshes with `Renderer::add_mesh`. Games with nothing 3D ignore it.
     #[allow(unused_variables)]
     fn load(&mut self, renderer: &mut Renderer) {}
+    /// Called at the start of every frame, for anything that needs the
+    /// renderer: locking the cursor, or uploading a mesh mid-game.
+    #[allow(unused_variables)]
+    fn before_frame(&mut self, renderer: &mut Renderer) {}
     /// Called every frame to say what is drawn in 3D and where the camera is,
     /// the way `update` says what is drawn in 2D. See `specs/0010-meshes.md`.
     #[allow(unused_variables)]
     fn draw(&mut self, scene: &mut Scene, camera: &mut Camera) {}
     fn process_keyboard(&mut self, input: keyboard::KeyboardInput);
+    /// A mouse button went down or came up. See `specs/0013-mouse-input.md`.
+    #[allow(unused_variables)]
+    fn process_mouse(&mut self, input: mouse::MouseInput) {}
+    /// The cursor moved, in the same pixels quads and text use.
+    #[allow(unused_variables)]
+    fn cursor_moved(&mut self, position: Vec2) {}
+    /// The mouse moved, in device units. This keeps arriving while the cursor
+    /// is locked, which is what a camera should read.
+    #[allow(unused_variables)]
+    fn mouse_motion(&mut self, delta: Vec2) {}
+    /// The wheel scrolled, in pixels.
+    #[allow(unused_variables)]
+    fn mouse_wheel(&mut self, delta: Vec2) {}
     fn is_quitting(&self) -> bool;
     fn focus_changed(&mut self, focus: bool);
     /// Called after the window changes size, with the new size in physical pixels.
@@ -148,6 +167,8 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::RedrawRequested => {
+                self.game.before_frame(&mut running.renderer);
+
                 let now = Instant::now();
                 let dt = clamp_delta_time((now - running.last_update).as_secs_f32());
                 running.last_update = now;
@@ -188,6 +209,17 @@ impl ApplicationHandler for App {
                     self.game.process_keyboard(keyboard_input);
                 }
             }
+            WindowEvent::MouseInput { button, state, .. } => {
+                let input = mouse::MouseInput::new((&button).into(), (&state).into());
+                self.game.process_mouse(input);
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.game
+                    .cursor_moved(vec2(position.x as f32, position.y as f32));
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                self.game.mouse_wheel(mouse::scroll_pixels(&delta));
+            }
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(physical_size) => {
                 if physical_size.width > 0 && physical_size.height > 0 {
@@ -204,6 +236,19 @@ impl ApplicationHandler for App {
 
         if self.game.is_quitting() {
             event_loop.exit();
+        }
+    }
+
+    /// Raw mouse movement, which is separate from the cursor because a locked
+    /// cursor stops moving while the mouse keeps going.
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: DeviceEvent,
+    ) {
+        if let DeviceEvent::MouseMotion { delta } = event {
+            self.game.mouse_motion(vec2(delta.0 as f32, delta.1 as f32));
         }
     }
 

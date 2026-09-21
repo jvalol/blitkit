@@ -20,6 +20,16 @@ not a priority, and it never changes once a spec exists.
 | [0010](0010-meshes.md) | 3D vertices, meshes, transforms, instancing |
 | [0011](0011-textures.md) | Textures, samplers and mipmaps |
 | [0012](0012-lighting.md) | One directional light, Blinn-Phong shading |
+| [0013](0013-mouse-input.md) | Buttons, the cursor, raw motion, the wheel, cursor lock |
 
 `cargo run --example cubes` draws what specs 0007 through 0012 built: lit,
 textured, depth sorted, instanced geometry with a camera that moves.
+
+## Drafted, not built
+
+What a 3D game needs that the engine still lacks, in the order it would be done.
+
+| Spec | Covers |
+| --- | --- |
+| [0014](0014-collision.md) | Boxes, spheres, rays, swept tests, move and slide |
+| [0015](0015-shadows.md) | Shadow mapping from the one directional light |

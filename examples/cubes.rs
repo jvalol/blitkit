@@ -5,11 +5,15 @@
 //!
 //! The camera orbits on its own. Left and right turn it, up and down raise and
 //! lower it, and escape quits.
+//!
+//! Drag with the left button to turn, scroll to move closer or further, and
+//! press space to lock the cursor so turning never stops at the screen edge.
 
 use blitkit::camera::Camera;
 use blitkit::geometry::Geometry;
 use blitkit::keyboard::{KeyboardInput, KeyboardKey, KeyboardKeyState};
 use blitkit::mesh::{MeshData, Transform};
+use blitkit::mouse::{MouseButton, MouseInput};
 use blitkit::renderer::render_text::{RenderText, TextRenderer};
 use blitkit::renderer::scene::{MeshId, Scene, TextureId};
 use blitkit::renderer::Renderer;
@@ -30,6 +34,13 @@ struct Cubes {
     height: f32,
     turning: f32,
     rising: f32,
+    /// Set by dragging or by raw motion while the cursor is locked.
+    dragging: bool,
+    drag_turn: f32,
+    drag_rise: f32,
+    distance: f32,
+    lock_cursor: Option<bool>,
+    cursor: glam::Vec2,
     quitting: bool,
 }
 
@@ -44,6 +55,12 @@ impl Cubes {
             height: 2.0,
             turning: 0.0,
             rising: 0.0,
+            dragging: false,
+            drag_turn: 0.0,
+            drag_rise: 0.0,
+            distance: 6.0,
+            lock_cursor: None,
+            cursor: glam::Vec2::ZERO,
             quitting: false,
         }
     }
@@ -75,15 +92,24 @@ impl Game for Cubes {
         _sound_system: &SoundSystem,
     ) {
         self.time += dt;
-        self.angle += self.turning * dt;
-        self.height = (self.height + self.rising * dt).clamp(0.2, 8.0);
+        self.angle += self.turning * dt + self.drag_turn;
+        self.height = (self.height + self.rising * dt - self.drag_rise).clamp(0.2, 8.0);
+        // dragging is a one-off nudge per event, not a rate
+        self.drag_turn = 0.0;
+        self.drag_rise = 0.0;
 
         // 2D on top of the world, to see the two passes do not fight
         text_renderer.reset();
         text_renderer.push_render_text(RenderText {
             position: glam::vec2(20.0, 20.0),
-            text: String::from("arrows move the camera"),
-            size: 20.0,
+            text: String::from("arrows or drag to move, scroll to zoom, space locks the cursor"),
+            size: 14.0,
+            ..Default::default()
+        });
+        text_renderer.push_render_text(RenderText {
+            position: glam::vec2(20.0, 44.0),
+            text: format!("cursor {:.0}, {:.0}", self.cursor.x, self.cursor.y),
+            size: 14.0,
             ..Default::default()
         });
     }
@@ -142,7 +168,11 @@ impl Game for Cubes {
 
         // the camera orbits whatever the player does, so every side shows
         let orbit = self.angle + self.time * 0.3;
-        camera.position = vec3(orbit.sin() * 6.0, self.height, orbit.cos() * 6.0);
+        camera.position = vec3(
+            orbit.sin() * self.distance,
+            self.height,
+            orbit.cos() * self.distance,
+        );
         camera.target = Vec3::ZERO;
     }
 
@@ -155,8 +185,44 @@ impl Game for Cubes {
             KeyboardKey::Up => self.rising = if held { 2.0 } else { 0.0 },
             KeyboardKey::Down => self.rising = if held { -2.0 } else { 0.0 },
             KeyboardKey::Escape => self.quitting = held,
+            // applied next frame, when the renderer is reachable
+            KeyboardKey::Space if held => {
+                self.lock_cursor = Some(!matches!(self.lock_cursor, Some(true)));
+            }
             _ => (),
         }
+    }
+
+    fn before_frame(&mut self, renderer: &mut Renderer) {
+        if let Some(wanted) = self.lock_cursor {
+            if wanted != renderer.cursor_locked() {
+                let locked = renderer.set_cursor_locked(wanted);
+                // the platform may refuse, so believe it rather than the ask
+                self.lock_cursor = Some(locked);
+            }
+        }
+    }
+
+    fn process_mouse(&mut self, input: MouseInput) {
+        if input.button == MouseButton::Left {
+            self.dragging = input.is_pressed();
+        }
+    }
+
+    fn cursor_moved(&mut self, position: glam::Vec2) {
+        self.cursor = position;
+    }
+
+    fn mouse_motion(&mut self, delta: glam::Vec2) {
+        // while dragging, or always once the cursor is locked
+        if self.dragging || self.lock_cursor == Some(true) {
+            self.drag_turn += delta.x * 0.005;
+            self.drag_rise += delta.y * 0.01;
+        }
+    }
+
+    fn mouse_wheel(&mut self, delta: glam::Vec2) {
+        self.distance = (self.distance - delta.y * 0.05).clamp(2.0, 20.0);
     }
 
     fn is_quitting(&self) -> bool {
