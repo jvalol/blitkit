@@ -4,11 +4,11 @@ version = "0.3.0"
 authors = ["Jake Van Alstyne 🎩 <jake.van.alstyne@hey.com>"]
 edition = "2018"
 rust-version = "1.87"
-description = "A small 2D game engine over wgpu: colored quads, text, keyboard input and sound"
+description = "A small 2D and 3D game engine over wgpu: meshes, textures, lighting, shadows, collision, text and sound"
 repository = "https://github.com/jvalol/blitzkit"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-keywords = ["gamedev", "graphics", "wgpu", "2d", "engine"]
+keywords = ["gamedev", "graphics", "wgpu", "3d", "engine"]
 categories = ["game-engines", "graphics"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
