@@ -1,6 +1,6 @@
 # 0010 Meshes
 
-**Status:** draft
+**Status:** implemented
 **Date:** 2026-09-21
 
 ## Goal
@@ -19,8 +19,9 @@ are long lived: a game builds one and draws it many times.
 The engine ships a cube and a plane, so a game can see something without
 supplying geometry.
 
-**Drawing.** A game pushes a mesh and a transform for each thing it wants drawn
-this frame, the same shape as `push_quad`. The transform is a `Mat4`, and a
+**Drawing.** A game uploads meshes once in `Game::load` and pushes a mesh and a
+transform into the `Scene` each frame in `Game::draw`, the same shape as
+`push_quad`. Both have empty defaults, so a 2D game ignores them. The transform is a `Mat4`, and a
 `Transform` helper builds one from position, rotation and scale. Drawing the
 same mesh many times is instanced, one draw call per mesh with the transforms in
 an instance buffer.
@@ -38,12 +39,26 @@ several glTF wants.
 - The built-in cube has 8 corners, 12 triangles, and normals per face. — `mesh::tests::the_cube_is_a_cube`
 - A transform built from position, rotation and scale applies them in that order. — `mesh::tests::transform_applies_scale_rotation_then_position`
 - The normal matrix is the inverse transpose of the model matrix. — `mesh::tests::normal_matrix_survives_non_uniform_scale`
-- Pushing the same mesh twice makes one draw call with two instances. — `renderer::tests::repeated_meshes_are_instanced`
+- Pushing the same mesh twice makes one draw call with two instances. — `renderer::scene::tests::repeated_meshes_are_instanced`
+- An instance carries its transform and color. — `renderer::scene::tests::an_instance_carries_its_transform_and_color`
+- The instance layout's offsets match the struct's real ones. — `renderer::scene::tests::the_instance_layout_matches_the_struct`
+- The vertex layout's offsets match too. — `mesh::tests::vertex_has_position_normal_and_uv`
+- A mesh loaded without normals gets them computed. — `mesh::tests::computes_missing_normals`
+- The built-in plane faces up. — `mesh::tests::the_plane_faces_up`
 - An OBJ file loads into vertices and indices. — `mesh::tests::loads_an_obj_file`
 
 ### Verified by hand
 
-- The cube looks like a cube from every angle. — run the 3D example and orbit it.
+Run `cargo run --example cubes` in blitkit. The camera orbits on its own.
+
+- The cube looks like a cube from every angle, with no glimpses of its inside.
+- The near cube covers the far one although it is pushed later, which is depth
+  testing rather than draw order, per spec 0009.
+- The text stays on top of the world.
+
+Until lighting lands in spec 0012 the shader is flat colored, so a cube's faces
+do not differ in brightness. The example spins one and gives it a floor for that
+reason.
 
 ## Out of scope
 

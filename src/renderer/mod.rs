@@ -1,8 +1,11 @@
 pub mod depth;
 pub mod render_text;
+pub mod scene;
 
 use crate::camera::Camera;
 use crate::geometry::vertex::*;
+use crate::mesh::MeshData;
+use scene::{Instance, MeshId, Scene};
 use crate::geometry::Geometry;
 use render_text::*;
 
@@ -37,8 +40,18 @@ pub struct Renderer {
     text_brush: TextBrush<FontRef<'static>>,
     /// Built here and resized with the surface. The pass that attaches it
     /// arrives with meshes in spec 0010; quads and text never use it.
-    #[allow(dead_code)]
     depth: depth::DepthTexture,
+    mesh_pipeline: wgpu::RenderPipeline,
+    meshes: Vec<GpuMesh>,
+    /// Grown as needed, like the quad buffers.
+    instance_buffer: wgpu::Buffer,
+}
+
+/// A mesh living on the GPU. Built once, drawn many times.
+struct GpuMesh {
+    vertices: wgpu::Buffer,
+    indices: wgpu::Buffer,
+    index_count: u32,
 }
 
 impl Renderer {
@@ -132,6 +145,9 @@ impl Renderer {
         );
 
         let depth = depth::DepthTexture::new(&device, config.width, config.height);
+        let mesh_pipeline =
+            create_mesh_pipeline(&device, config.format, &camera_bind_group_layout);
+        let instance_buffer = create_buffer(&device, 0, wgpu::BufferUsages::VERTEX);
 
         Self {
             surface,
@@ -149,7 +165,36 @@ impl Renderer {
             index_buffer,
             text_brush,
             depth,
+            mesh_pipeline,
+            meshes: Vec::new(),
+            instance_buffer,
         }
+    }
+
+    /// Uploads a mesh once, and hands back the handle a game draws it with.
+    pub fn add_mesh(&mut self, data: &MeshData) -> MeshId {
+        let vertices = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Mesh Vertices"),
+                contents: bytemuck::cast_slice(&data.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let indices = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Mesh Indices"),
+                contents: bytemuck::cast_slice(&data.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+        self.meshes.push(GpuMesh {
+            vertices,
+            indices,
+            index_count: data.indices.len() as u32,
+        });
+
+        MeshId(self.meshes.len() - 1)
     }
 
     pub fn camera(&self) -> &Camera {
@@ -182,7 +227,7 @@ impl Renderer {
             .resize_view(self.width(), self.height(), &self.queue);
     }
 
-    pub fn render(&mut self, geometry: &Geometry, text_renderer: &TextRenderer) {
+    pub fn render(&mut self, scene: &Scene, geometry: &Geometry, text_renderer: &TextRenderer) {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) => frame,
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
@@ -225,6 +270,46 @@ impl Renderer {
                 label: Some("Renderer Encoder"),
             });
 
+        let batches = self.upload_instances(scene);
+
+        // the world first, depth tested, then the interface painted on top
+        {
+            let mut mesh_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Mesh Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            mesh_pass.set_pipeline(&self.mesh_pipeline);
+            mesh_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            mesh_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+
+            for (mesh_id, first, count) in batches.iter() {
+                let mesh = &self.meshes[mesh_id.0];
+                mesh_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                mesh_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                mesh_pass.draw_indexed(0..mesh.index_count, 0, *first..(*first + *count));
+            }
+        }
+
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -233,7 +318,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -258,6 +343,35 @@ impl Renderer {
 
         self.queue.submit(std::iter::once(encoder.finish()));
         self.queue.present(frame);
+    }
+
+    /// Packs every instance into one buffer and says where each mesh's run
+    /// starts, so each mesh is one instanced draw.
+    fn upload_instances(&mut self, scene: &Scene) -> Vec<(MeshId, u32, u32)> {
+        let mut instances: Vec<Instance> = Vec::new();
+        let mut batches = Vec::new();
+
+        for (mesh, mesh_instances) in scene.batches() {
+            if mesh.0 >= self.meshes.len() {
+                log::warn!("a scene asked for mesh {:?}, which was never added", mesh);
+                continue;
+            }
+            batches.push((mesh, instances.len() as u32, mesh_instances.len() as u32));
+            instances.extend_from_slice(mesh_instances);
+        }
+
+        if instances.is_empty() {
+            return batches;
+        }
+
+        let bytes: &[u8] = bytemuck::cast_slice(&instances);
+        if bytes.len() as u64 > self.instance_buffer.size() {
+            self.instance_buffer = create_buffer_init(&self.device, bytes, wgpu::BufferUsages::VERTEX);
+        } else {
+            self.queue.write_buffer(&self.instance_buffer, 0, bytes);
+        }
+
+        batches
     }
 
     /// Writes this frame's quads into the vertex and index buffers, growing them when they are too small.
@@ -303,6 +417,51 @@ fn create_buffer_init(
         label: None,
         contents,
         usage: usage | wgpu::BufferUsages::COPY_DST,
+    })
+}
+
+/// The 3D pipeline: mesh vertices, one instance per copy, the camera uniform,
+/// depth testing and back face culling from spec 0009.
+fn create_mesh_pipeline(
+    device: &wgpu::Device,
+    color_format: wgpu::TextureFormat,
+    camera_bind_group_layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::include_wgsl!("../../res/shaders/mesh.wgsl"));
+
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Mesh Pipeline Layout"),
+        bind_group_layouts: &[Some(camera_bind_group_layout)],
+        immediate_size: 0,
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Mesh Pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[
+                Some(crate::mesh::Vertex::DESC),
+                Some(Instance::DESC),
+            ],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: color_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: depth::mesh_primitive_state(),
+        depth_stencil: Some(depth::state()),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
     })
 }
 

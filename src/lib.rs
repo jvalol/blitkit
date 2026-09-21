@@ -1,11 +1,14 @@
 pub mod camera;
 pub mod geometry;
 pub mod keyboard;
+pub mod mesh;
 pub mod renderer;
 pub mod sound;
 
+use camera::Camera;
 use geometry::Geometry;
 use renderer::render_text::*;
+use renderer::scene::Scene;
 use renderer::*;
 use sound::SoundSystem;
 
@@ -36,6 +39,14 @@ pub trait Game {
         text_renderer: &mut TextRenderer,
         sound_system: &SoundSystem,
     );
+    /// Called once when the window opens, before `initialize`, for uploading
+    /// meshes with `Renderer::add_mesh`. Games with nothing 3D ignore it.
+    #[allow(unused_variables)]
+    fn load(&mut self, renderer: &mut Renderer) {}
+    /// Called every frame to say what is drawn in 3D and where the camera is,
+    /// the way `update` says what is drawn in 2D. See `specs/0010-meshes.md`.
+    #[allow(unused_variables)]
+    fn draw(&mut self, scene: &mut Scene, camera: &mut Camera) {}
     fn process_keyboard(&mut self, input: keyboard::KeyboardInput);
     fn is_quitting(&self) -> bool;
     fn focus_changed(&mut self, focus: bool);
@@ -79,6 +90,7 @@ struct Running {
     renderer: Renderer,
     geometry: Geometry,
     text_renderer: TextRenderer,
+    scene: Scene,
     sound_system: SoundSystem,
     last_update: Instant,
 }
@@ -97,7 +109,8 @@ impl ApplicationHandler for App {
         let instance_desc = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(
             event_loop.owned_display_handle(),
         ));
-        let renderer = pollster::block_on(Renderer::new(window.clone(), instance_desc));
+        let mut renderer = pollster::block_on(Renderer::new(window.clone(), instance_desc));
+        self.game.load(&mut renderer);
         let mut geometry = Geometry::new();
         let mut text_renderer = TextRenderer::new();
         let sound_system = SoundSystem::new();
@@ -114,6 +127,7 @@ impl ApplicationHandler for App {
             renderer,
             geometry,
             text_renderer,
+            scene: Scene::new(),
             sound_system,
             last_update: Instant::now(),
         });
@@ -142,9 +156,16 @@ impl ApplicationHandler for App {
                     &mut running.text_renderer,
                     &running.sound_system,
                 );
-                running
-                    .renderer
-                    .render(&running.geometry, &running.text_renderer);
+                running.scene.reset();
+                let mut camera = *running.renderer.camera();
+                self.game.draw(&mut running.scene, &mut camera);
+                running.renderer.set_camera(camera);
+
+                running.renderer.render(
+                    &running.scene,
+                    &running.geometry,
+                    &running.text_renderer,
+                );
             }
             WindowEvent::KeyboardInput {
                 event:
