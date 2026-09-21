@@ -13,6 +13,10 @@ struct Uniforms {
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 
+// White by default, so an untextured mesh multiplies by one, per spec 0011.
+@group(1) @binding(0) var surface_texture: texture_2d<f32>;
+@group(1) @binding(1) var surface_sampler: sampler;
+
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
@@ -70,6 +74,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         specular = light * pow(max(dot(normal, half_vector), 0.0), max(in.shininess, 1.0));
     }
 
-    let shaded = in.color.rgb * (uniforms.ambient.rgb + diffuse) + specular;
-    return vec4<f32>(shaded, in.color.a);
+    // the instance color tints what is sampled rather than replacing it
+    let sampled = textureSample(surface_texture, surface_sampler, in.uv);
+    let base = in.color * sampled;
+
+    let shaded = base.rgb * (uniforms.ambient.rgb + diffuse) + specular;
+    return vec4<f32>(shaded, base.a);
 }

@@ -15,6 +15,15 @@ use std::collections::HashMap;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MeshId(pub(crate) usize);
 
+/// A texture that has been uploaded to the GPU, per spec 0011.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TextureId(pub(crate) usize);
+
+impl TextureId {
+    /// The one white pixel every untextured mesh is drawn with.
+    pub const WHITE: TextureId = TextureId(0);
+}
+
 /// One copy of a mesh: where it is, and what color it is drawn in.
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -71,7 +80,9 @@ impl Instance {
 /// The 3D half of a frame, emptied and refilled like `Geometry`.
 #[derive(Debug, Default)]
 pub struct Scene {
-    instances: HashMap<MeshId, Vec<Instance>>,
+    /// Batched by mesh and texture together, since a draw call can only have
+    /// one of each.
+    instances: HashMap<(MeshId, TextureId), Vec<Instance>>,
     /// The one light in the scene. A game changes it like anything else.
     pub light: Light,
 }
@@ -105,22 +116,41 @@ impl Scene {
         color: Vec4,
         shininess: f32,
     ) {
+        self.push_textured(
+            mesh,
+            TextureId::WHITE,
+            transform,
+            color,
+            shininess,
+        );
+    }
+
+    /// Draws `mesh` wearing `texture`. The color multiplies what is sampled, so
+    /// it tints the image rather than replacing it, per spec 0011.
+    pub fn push_textured(
+        &mut self,
+        mesh: MeshId,
+        texture: TextureId,
+        transform: &Transform,
+        color: Vec4,
+        shininess: f32,
+    ) {
         self.instances
-            .entry(mesh)
+            .entry((mesh, texture))
             .or_default()
             .push(Instance::new(transform, color, shininess));
     }
 
     /// Every mesh with something to draw, and its instances. Sorted, so a frame
     /// draws in the same order each time.
-    pub(crate) fn batches(&self) -> Vec<(MeshId, &[Instance])> {
-        let mut batches: Vec<(MeshId, &[Instance])> = self
+    pub(crate) fn batches(&self) -> Vec<(MeshId, TextureId, &[Instance])> {
+        let mut batches: Vec<(MeshId, TextureId, &[Instance])> = self
             .instances
             .iter()
             .filter(|(_, instances)| !instances.is_empty())
-            .map(|(mesh, instances)| (*mesh, instances.as_slice()))
+            .map(|((mesh, texture), instances)| (*mesh, *texture, instances.as_slice()))
             .collect();
-        batches.sort_by_key(|(mesh, _)| *mesh);
+        batches.sort_by_key(|(mesh, texture, _)| (*mesh, *texture));
         batches
     }
 
@@ -149,8 +179,21 @@ mod tests {
         // one draw per mesh, not one per thing drawn
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[0].0, cube);
-        assert_eq!(batches[0].1.len(), 2);
-        assert_eq!(batches[1].1.len(), 1);
+        assert_eq!(batches[0].2.len(), 2);
+        assert_eq!(batches[1].2.len(), 1);
+    }
+
+    #[test]
+    fn one_mesh_in_two_textures_is_two_batches() {
+        let cube = MeshId(0);
+        let bricks = TextureId(1);
+        let mut scene = Scene::new();
+
+        scene.push(cube, &Transform::new());
+        scene.push_textured(cube, bricks, &Transform::new(), Vec4::ONE, 32.0);
+
+        // a draw call wears one texture, so the same mesh splits
+        assert_eq!(scene.batches().len(), 2);
     }
 
     #[test]

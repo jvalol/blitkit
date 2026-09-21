@@ -11,15 +11,19 @@ use blitkit::geometry::Geometry;
 use blitkit::keyboard::{KeyboardInput, KeyboardKey, KeyboardKeyState};
 use blitkit::mesh::{MeshData, Transform};
 use blitkit::renderer::render_text::{RenderText, TextRenderer};
-use blitkit::renderer::scene::{MeshId, Scene};
+use blitkit::renderer::scene::{MeshId, Scene, TextureId};
 use blitkit::renderer::Renderer;
 use blitkit::sound::SoundSystem;
+use blitkit::texture::TextureData;
 use blitkit::{start, Game};
 use glam::{vec3, vec4, Quat, Vec3};
+
+const CHECKER: &[u8] = include_bytes!("../res/textures/checker.png");
 
 struct Cubes {
     cube: Option<MeshId>,
     floor: Option<MeshId>,
+    checker: Option<TextureId>,
     /// Seconds since the example started, which drives the spin and the orbit.
     time: f32,
     angle: f32,
@@ -34,6 +38,7 @@ impl Cubes {
         Self {
             cube: None,
             floor: None,
+            checker: None,
             time: 0.0,
             angle: 0.0,
             height: 2.0,
@@ -48,6 +53,9 @@ impl Game for Cubes {
     fn load(&mut self, renderer: &mut Renderer) {
         self.cube = Some(renderer.add_mesh(&MeshData::cube()));
         self.floor = Some(renderer.add_mesh(&MeshData::plane()));
+        self.checker = TextureData::from_bytes(CHECKER)
+            .map(|data| renderer.add_texture(&data))
+            .ok();
     }
 
     fn initialize(
@@ -86,19 +94,30 @@ impl Game for Cubes {
             _ => return,
         };
 
-        // a wide, dim floor to catch the eye at a distance
-        scene.push_colored(
-            floor,
-            &Transform::at(vec3(0.0, -0.5, 0.0)).with_scale(Vec3::splat(20.0)),
-            vec4(0.15, 0.15, 0.2, 1.0),
-        );
+        // a wide floor, textured if the image loaded
+        let floor_transform =
+            Transform::at(vec3(0.0, -0.5, 0.0)).with_scale(Vec3::splat(20.0));
+        match self.checker {
+            Some(checker) => scene.push_textured(
+                floor,
+                checker,
+                &floor_transform,
+                vec4(0.6, 0.6, 0.7, 1.0),
+                8.0,
+            ),
+            None => scene.push_colored(floor, &floor_transform, vec4(0.15, 0.15, 0.2, 1.0)),
+        }
 
-        // one spinning in the middle
-        scene.push_colored(
-            cube,
-            &Transform::at(Vec3::ZERO).with_rotation(Quat::from_rotation_y(self.time)),
-            vec4(0.9, 0.3, 0.3, 1.0),
-        );
+        // one spinning in the middle, wearing the same image, tinted red, so a
+        // texture and a tint together are visible
+        let spinning =
+            Transform::at(Vec3::ZERO).with_rotation(Quat::from_rotation_y(self.time));
+        match self.checker {
+            Some(checker) => {
+                scene.push_textured(cube, checker, &spinning, vec4(0.9, 0.5, 0.5, 1.0), 32.0)
+            }
+            None => scene.push_colored(cube, &spinning, vec4(0.9, 0.3, 0.3, 1.0)),
+        }
 
         // one near the camera and one far from it, pushed far first, so the
         // near one has to win on depth rather than on draw order

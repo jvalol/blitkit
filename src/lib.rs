@@ -5,6 +5,7 @@ pub mod lighting;
 pub mod mesh;
 pub mod renderer;
 pub mod sound;
+pub mod texture;
 
 use camera::Camera;
 use geometry::Geometry;

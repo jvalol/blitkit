@@ -6,7 +6,8 @@ use crate::camera::Camera;
 use crate::geometry::vertex::*;
 use crate::lighting::Light;
 use crate::mesh::MeshData;
-use scene::{Instance, MeshId, Scene};
+use crate::texture::TextureData;
+use scene::{Instance, MeshId, Scene, TextureId};
 use crate::geometry::Geometry;
 use render_text::*;
 
@@ -44,6 +45,9 @@ pub struct Renderer {
     depth: depth::DepthTexture,
     mesh_pipeline: wgpu::RenderPipeline,
     meshes: Vec<GpuMesh>,
+    textures: Vec<wgpu::BindGroup>,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
     /// Grown as needed, like the quad buffers.
     instance_buffer: wgpu::Buffer,
 }
@@ -151,11 +155,48 @@ impl Renderer {
         );
 
         let depth = depth::DepthTexture::new(&device, config.width, config.height);
-        let mesh_pipeline =
-            create_mesh_pipeline(&device, config.format, &camera_bind_group_layout);
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Texture Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+        // linear and repeating, with mips, per spec 0011
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Texture Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        let mesh_pipeline = create_mesh_pipeline(
+            &device,
+            config.format,
+            &camera_bind_group_layout,
+            &texture_bind_group_layout,
+        );
         let instance_buffer = create_buffer(&device, 0, wgpu::BufferUsages::VERTEX);
 
-        Self {
+        let mut renderer = Self {
             surface,
             device,
             queue,
@@ -173,8 +214,75 @@ impl Renderer {
             depth,
             mesh_pipeline,
             meshes: Vec::new(),
+            textures: Vec::new(),
+            texture_bind_group_layout,
+            sampler,
             instance_buffer,
+        };
+
+        // TextureId::WHITE, what an untextured mesh is drawn with
+        renderer.add_texture(&TextureData::white());
+        renderer
+    }
+
+    /// Uploads an image and its mip chain, and hands back the handle a game
+    /// draws with.
+    pub fn add_texture(&mut self, data: &TextureData) -> TextureId {
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Texture"),
+            size: wgpu::Extent3d {
+                width: data.width(),
+                height: data.height(),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: data.mip_level_count(),
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: crate::texture::FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        for (level, mip) in data.levels.iter().enumerate() {
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: level as u32,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &mip.pixels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(mip.width * 4),
+                    rows_per_image: Some(mip.height),
+                },
+                wgpu::Extent3d {
+                    width: mip.width,
+                    height: mip.height,
+                    depth_or_array_layers: 1,
+                },
+            );
         }
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Texture Bind Group"),
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+
+        self.textures.push(bind_group);
+        TextureId(self.textures.len() - 1)
     }
 
     /// Uploads a mesh once, and hands back the handle a game draws it with.
@@ -308,8 +416,9 @@ impl Renderer {
             mesh_pass.set_bind_group(0, &self.camera_bind_group, &[]);
             mesh_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
-            for (mesh_id, first, count) in batches.iter() {
+            for (mesh_id, texture_id, first, count) in batches.iter() {
                 let mesh = &self.meshes[mesh_id.0];
+                mesh_pass.set_bind_group(1, &self.textures[texture_id.0], &[]);
                 mesh_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 mesh_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 mesh_pass.draw_indexed(0..mesh.index_count, 0, *first..(*first + *count));
@@ -353,16 +462,25 @@ impl Renderer {
 
     /// Packs every instance into one buffer and says where each mesh's run
     /// starts, so each mesh is one instanced draw.
-    fn upload_instances(&mut self, scene: &Scene) -> Vec<(MeshId, u32, u32)> {
+    fn upload_instances(&mut self, scene: &Scene) -> Vec<(MeshId, TextureId, u32, u32)> {
         let mut instances: Vec<Instance> = Vec::new();
         let mut batches = Vec::new();
 
-        for (mesh, mesh_instances) in scene.batches() {
+        for (mesh, texture, mesh_instances) in scene.batches() {
             if mesh.0 >= self.meshes.len() {
                 log::warn!("a scene asked for mesh {:?}, which was never added", mesh);
                 continue;
             }
-            batches.push((mesh, instances.len() as u32, mesh_instances.len() as u32));
+            if texture.0 >= self.textures.len() {
+                log::warn!("a scene asked for texture {:?}, which was never added", texture);
+                continue;
+            }
+            batches.push((
+                mesh,
+                texture,
+                instances.len() as u32,
+                mesh_instances.len() as u32,
+            ));
             instances.extend_from_slice(mesh_instances);
         }
 
@@ -460,12 +578,16 @@ fn create_mesh_pipeline(
     device: &wgpu::Device,
     color_format: wgpu::TextureFormat,
     camera_bind_group_layout: &wgpu::BindGroupLayout,
+    texture_bind_group_layout: &wgpu::BindGroupLayout,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::include_wgsl!("../../res/shaders/mesh.wgsl"));
 
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Mesh Pipeline Layout"),
-        bind_group_layouts: &[Some(camera_bind_group_layout)],
+        bind_group_layouts: &[
+            Some(camera_bind_group_layout),
+            Some(texture_bind_group_layout),
+        ],
         immediate_size: 0,
     });
 
