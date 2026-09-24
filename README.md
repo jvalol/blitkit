@@ -1,9 +1,8 @@
 # blitzkit
+
 In which I develop a wrapper around wgpu-rs to create a graphics development engine in rust.
 
-I'm currently simultaneously developing a Pong game using this engine, which is also a public repo. 
-
-Future plans will be to master 2d game development (get a few built with this engine, tetris, bricks, what have you) and proceed to 3d game development, following the same idea.
+2d and 3d. I built four games using it as the engine to prove it out.
 
 Feel free to follow along!
 
@@ -12,6 +11,9 @@ Feel free to follow along!
 - [pong](https://github.com/jvalol/pong)
 - [snake](https://github.com/jvalol/snake)
 - [tetris](https://github.com/jvalol/tetris)
+- [marble](https://github.com/jvalol/marble) first 3d game here
+
+There are also examples in this repo. Not games, just demonstrations.
 
 ## License
 
