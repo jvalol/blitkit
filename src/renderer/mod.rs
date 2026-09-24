@@ -453,7 +453,7 @@ impl Renderer {
             .set_viewport(self.config.width as f32, self.config.height as f32);
     }
 
-    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    pub(crate) fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         // A minimized window reports a zero size, which a surface cannot be configured with.
         if new_size.width == 0 || new_size.height == 0 {
             return;

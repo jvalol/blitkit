@@ -1,8 +1,11 @@
 # blitzkit
 
-A small 2D game engine over wgpu. A game implements the `Game` trait and calls
-`start()`, and the engine owns the window, the event loop, rendering, keyboard
-input, and sound. `pong` in the sibling directory is the game that exercises it.
+A small 2D and 3D game engine over wgpu. A game implements the `Game` trait and
+calls `start()`, and the engine owns the window, the event loop, rendering,
+keyboard and mouse input, and sound. The 3D half adds a camera, meshes with
+instancing, textures, one directional light that casts shadows, and collision
+shapes. Four games in sibling directories exercise it: `pong`, `snake` and
+`tetris` in 2D, and `marble` in 3D.
 
 ## Build and test
 
@@ -33,19 +36,40 @@ existing specs to stay true.
 ## Layout
 
 - `src/lib.rs` — the `Game` trait, the winit event loop, frame timing.
-- `src/renderer/` — wgpu setup, the quad pipeline, text through `wgpu_text`.
+- `src/renderer/` — wgpu setup, the quad and mesh pipelines, text through
+  `wgpu_text`. `scene.rs` is what a game pushes to be drawn in 3D, and
+  `depth.rs` holds the depth buffer and the settings that go with it.
 - `src/geometry/` — quads the game pushes each frame, and their vertices.
+- `src/camera.rs` — where the scene is looked at from, and its matrices.
+- `src/mesh.rs` — 3D vertices, the shapes that ship with the engine, and the
+  transform that places one in the world.
+- `src/texture.rs` — images decoded to RGBA, and their mip chains.
+- `src/lighting.rs` — the directional light, and a CPU copy of the shading that
+  `mesh.wgsl` runs.
+- `src/shadow.rs` — the shadow map's matrix, its bias, and the comparison.
+- `src/collision.rs` — boxes, spheres, rays, swept tests, move and slide.
 - `src/keyboard.rs` — winit `KeyCode` to the engine's own `KeyboardKey`.
+- `src/mouse.rs` — buttons, cursor position, raw motion, the wheel, cursor lock.
 - `src/sound.rs` — rodio playback, silent when no device opens.
-- `res/` — the font and the quad shader, both compiled into the binary.
+- `res/` — the font, the quad, mesh and shadow shaders, and the texture the
+  examples use. All of it is compiled in.
+- `examples/` — `cubes` for specs 0007 through 0012, `rolling` for 0013 through
+  0015, `klein` for 0016.
 - `specs/` — what the engine promises.
 
 ## Conventions
 
-- **Everything is in physical pixels**, origin top-left, y down. Quads, text
-  positions, and the size handed to `initialize` and `resized` all use it.
-- **Games never see wgpu or winit types.** Input arrives as `KeyboardInput`, sizes
-  as `(f32, f32)`.
+- **2D is in physical pixels**, origin top-left, y down. Quads, text positions,
+  the cursor position, and the size handed to `initialize` and `resized` all use
+  it.
+- **3D world space is right-handed with y up**, and the projection matrix is
+  where one becomes the other. Raw mouse motion is in device units rather than
+  pixels, since it keeps arriving while the cursor is locked. See
+  `specs/0007-math-types.md`.
+- **Games never see wgpu or winit types.** Input arrives as `KeyboardInput` and
+  `MouseInput`, sizes as `(f32, f32)`, and anything uploaded to the GPU comes
+  back as a handle (`MeshId`, `TextureId`) rather than a buffer or a texture.
+  The math types in the public API are glam's: `Vec2`, `Vec3`, `Mat4`, `Quat`.
 - **A missing device disables a feature, it doesn't panic.** Sound already works
   this way. Failing to get a GPU adapter is still fatal, since nothing can draw.
 - Tests live next to the code in `#[cfg(test)] mod tests`, and none of them may
