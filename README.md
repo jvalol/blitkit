@@ -45,9 +45,6 @@ with a gold ring hanging off centre partway down it](https://raw.githubuserconte
 
 Flying down the inside of a surface. Steer through the gold ring.
 
-`cubes` and `rolling` are the other two: lit textured geometry, and a ball with
-collision and shadows.
-
 ## License
 
 The code is under MIT or Apache-2.0, whichever you prefer.
