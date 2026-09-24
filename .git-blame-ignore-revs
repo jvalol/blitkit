@@ -1,0 +1,11 @@
+# Commits that only moved whitespace and line breaks, skipped by git blame so a
+# line is credited to whatever last changed its meaning.
+#
+# GitHub reads this file on its own. Locally it takes one setting:
+#
+#     git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# Entries are full SHAs and die silently if these commits are ever rebased.
+
+# Run cargo fmt
+879e497c34ac9940941eebf521c6a9315c98ed93
