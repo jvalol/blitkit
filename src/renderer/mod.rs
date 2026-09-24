@@ -525,8 +525,10 @@ impl Renderer {
 
         let batches = self.upload_instances(scene);
 
-        // what the light can see, first of all
-        {
+        // what the light can see, first of all. Skipped when nothing is drawn in
+        // 3D: the instance buffer is empty then, and slicing an empty buffer is
+        // a panic in wgpu.
+        if !batches.is_empty() {
             let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Shadow Pass"),
                 color_attachments: &[],
@@ -584,20 +586,24 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            mesh_pass.set_pipeline(&self.mesh_pipeline);
-            mesh_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            mesh_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            // This pass clears the frame, so it runs even with nothing 3D in
+            // it. Only the drawing waits on an instance buffer that exists.
+            if !batches.is_empty() {
+                mesh_pass.set_pipeline(&self.mesh_pipeline);
+                mesh_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                mesh_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
-            for (mesh_id, texture_id, first, count) in batches.iter() {
-                let mesh = &self.meshes[mesh_id.0];
-                if mesh.index_count == 0 {
-                    continue;
+                for (mesh_id, texture_id, first, count) in batches.iter() {
+                    let mesh = &self.meshes[mesh_id.0];
+                    if mesh.index_count == 0 {
+                        continue;
+                    }
+                    mesh_pass.set_bind_group(1, &self.textures[texture_id.0], &[]);
+                    mesh_pass.set_bind_group(2, &self.shadow_bind_group, &[]);
+                    mesh_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    mesh_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    mesh_pass.draw_indexed(0..mesh.index_count, 0, *first..(*first + *count));
                 }
-                mesh_pass.set_bind_group(1, &self.textures[texture_id.0], &[]);
-                mesh_pass.set_bind_group(2, &self.shadow_bind_group, &[]);
-                mesh_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                mesh_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                mesh_pass.draw_indexed(0..mesh.index_count, 0, *first..(*first + *count));
             }
         }
 
