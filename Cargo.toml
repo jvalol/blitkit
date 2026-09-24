@@ -1,7 +1,7 @@
 [package]
 name = "blitzkit"
-version = "0.3.0"
-authors = ["Jake Van Alstyne 🎩 <jake.van.alstyne@hey.com>"]
+version = "0.4.0"
+authors = ["Jake Van Alstyne ☥ <j@jva.lol>"]
 edition = "2018"
 rust-version = "1.87"
 description = "A small 2D and 3D game engine over wgpu: meshes, textures, lighting, shadows, collision, text and sound"
