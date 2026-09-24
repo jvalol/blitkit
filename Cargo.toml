@@ -10,8 +10,10 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["gamedev", "graphics", "wgpu", "3d", "engine"]
 categories = ["game-engines", "graphics"]
-# the old name's final release lives here; it is not part of this crate
-exclude = ["farewell"]
+# the old name's final release lives here; it is not part of this crate.
+# media is the readme's screenshots, which it links to by absolute url so they
+# render on crates.io too, so shipping half a megabyte of them would be waste.
+exclude = ["farewell", "media"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
