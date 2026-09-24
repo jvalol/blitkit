@@ -89,6 +89,10 @@ the result, and gets a shape the same size either way.
   klein`, press M for the solid surface, and drag it all the way around.
 - As a wire mesh, the neck is visible passing through the wall, and the ribbons
   are lit on whichever side is facing.
+- A surface seen only from the inside is solid the whole way. `cargo run
+  --example tunnel` flies down one for nine hundred metres, which is the case
+  two-sided geometry exists for: without it the tunnel would be a tube with no
+  walls at all.
 - Its shadow on the floor is a bottle, not a disc.
 - An empty mesh draws nothing rather than bringing the window down. Handing
   `Renderer::add_mesh` a lattice of no lines is the way in.

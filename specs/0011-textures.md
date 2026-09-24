@@ -55,6 +55,12 @@ Run `cargo run --example cubes` in blitzkit.
 - Distant floor squares do not shimmer as the camera orbits, which is the mip
   chain doing its job.
 
+`cargo run --example tunnel` is the harder case, and the one to reach for when
+the mip chain is in doubt.
+
+- A checker running the length of a tunnel to a vanishing point stays a checker
+  the whole way, rather than breaking into shimmer somewhere down it.
+
 ## Out of scope
 
 Cube maps, normal and roughness maps, texture atlases, compressed formats, and

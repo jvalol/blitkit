@@ -38,3 +38,7 @@ turned by hand, which is the shape that needs both sides of a surface drawn.
 
 `cargo run --example teapot` is 0017 and 0018: the Utah teapot, and a T that
 turns it to glass.
+
+`cargo run --example tunnel` flies down the inside of one: a tube and a string
+of rings, both from 0016's formulas, wearing 0011's checker all the way to the
+vanishing point.
