@@ -2,7 +2,7 @@
 
 In which I develop a wrapper around wgpu-rs to create a graphics development engine in rust.
 
-2d and 3d. I built four games using it as the engine to prove it out.
+2d _and_ 3d. I built four games using it as the engine to prove it out.
 
 Feel free to follow along!
 
