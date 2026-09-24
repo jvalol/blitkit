@@ -355,6 +355,83 @@ impl MeshData {
         Ok(data)
     }
 
+    /// Adds another mesh's triangles to this one, keeping both.
+    ///
+    /// Nothing is welded: corners that two meshes happen to share stay
+    /// separate, which is what a shape built out of separate patches wants.
+    pub fn extend(&mut self, other: &Self) {
+        let offset = self.vertices.len() as u32;
+
+        self.vertices.extend_from_slice(&other.vertices);
+        self.indices
+            .extend(other.indices.iter().map(|index| index + offset));
+    }
+
+    /// Gives a normal to any vertex that has none, averaged from the faces it
+    /// belongs to.
+    ///
+    /// `surface` leaves a zero normal where the surface has collapsed to a
+    /// point and there was nothing to measure. The faces around such a vertex
+    /// usually still know which way they face, which is enough to light it.
+    /// Where they have no area either, because a whole patch edge collapsed,
+    /// the vertex borrows from the corners it shares a triangle with. A vertex
+    /// no triangle uses keeps its zero normal, because nothing knows better.
+    pub fn fill_missing_normals(&mut self) {
+        let missing: Vec<usize> = self
+            .vertices
+            .iter()
+            .enumerate()
+            .filter(|(_, vertex)| Vec3::from(vertex.normal) == Vec3::ZERO)
+            .map(|(index, _)| index)
+            .collect();
+
+        if missing.is_empty() {
+            return;
+        }
+
+        let mut found = vec![Vec3::ZERO; self.vertices.len()];
+        for triangle in self.indices.chunks_exact(3) {
+            let [a, b, c] = [
+                triangle[0] as usize,
+                triangle[1] as usize,
+                triangle[2] as usize,
+            ];
+            let edge1 = Vec3::from(self.vertices[b].position) - Vec3::from(self.vertices[a].position);
+            let edge2 = Vec3::from(self.vertices[c].position) - Vec3::from(self.vertices[a].position);
+            let face = edge1.cross(edge2);
+
+            for index in [a, b, c] {
+                found[index] += face;
+            }
+        }
+
+        let mut still_missing = Vec::new();
+        for index in missing {
+            let normal = found[index].normalize_or_zero();
+            self.vertices[index].normal = normal.to_array();
+            if normal == Vec3::ZERO {
+                still_missing.push(index);
+            }
+        }
+
+        // a corner where the whole patch edge has collapsed has no face with
+        // any area to it, so it borrows from the corners it shares a triangle
+        // with, which are the nearest thing that knows
+        for index in still_missing {
+            let mut borrowed = Vec3::ZERO;
+            for triangle in self.indices.chunks_exact(3) {
+                if !triangle.contains(&(index as u32)) {
+                    continue;
+                }
+                for other in triangle {
+                    borrowed += Vec3::from(self.vertices[*other as usize].normal);
+                }
+            }
+
+            self.vertices[index].normal = borrowed.normalize_or_zero().to_array();
+        }
+    }
+
     /// Gives every vertex the normal of the faces it belongs to, averaged.
     pub fn compute_normals(&mut self) {
         let mut normals = vec![Vec3::ZERO; self.vertices.len()];
@@ -489,6 +566,52 @@ mod tests {
         let phi = v * std::f32::consts::PI;
 
         Vec3::new(phi.sin() * theta.cos(), phi.cos(), phi.sin() * theta.sin())
+    }
+
+    #[test]
+    fn extending_a_mesh_keeps_both() {
+        let mut first = MeshData::plane();
+        let second = MeshData::cube();
+        let (corners, triangles) = (first.vertices.len(), first.triangle_count());
+
+        first.extend(&second);
+
+        assert_eq!(first.vertices.len(), corners + second.vertices.len());
+        assert_eq!(first.triangle_count(), triangles + second.triangle_count());
+
+        // the second mesh's corners moved, so its triangles point at the new
+        // places rather than back at the first mesh's
+        let moved = &first.indices[triangles * 3..];
+        assert_eq!(moved[0], second.indices[0] + corners as u32);
+        assert!(moved.iter().all(|index| *index as usize >= corners));
+    }
+
+    #[test]
+    fn a_missing_normal_is_borrowed() {
+        let mut data = MeshData::plane();
+        data.vertices[0].normal = [0.0, 0.0, 0.0];
+
+        data.fill_missing_normals();
+
+        // the plane faces up, so the corner with nothing gets the same
+        assert!(
+            (Vec3::from(data.vertices[0].normal) - Vec3::Y).length() < 1e-5,
+            "borrowed {:?}",
+            data.vertices[0].normal
+        );
+        // the ones that had a normal keep it
+        assert_eq!(Vec3::from(data.vertices[1].normal), Vec3::Y);
+    }
+
+    #[test]
+    fn a_normal_with_nothing_to_borrow_from_stays_missing() {
+        // a lone corner no triangle uses: nothing knows which way it faces
+        let mut data = MeshData::plane();
+        data.vertices.push(Vertex::new([9.0, 9.0, 9.0], [0.0, 0.0, 0.0], [0.0, 0.0]));
+
+        data.fill_missing_normals();
+
+        assert_eq!(data.vertices.last().unwrap().normal, [0.0, 0.0, 0.0]);
     }
 
     #[test]

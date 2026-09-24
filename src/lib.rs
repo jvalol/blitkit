@@ -8,6 +8,7 @@ pub mod mouse;
 pub mod renderer;
 pub mod shadow;
 pub mod sound;
+pub mod teapot;
 pub mod texture;
 
 use camera::Camera;

@@ -24,6 +24,8 @@ not a priority, and it never changes once a spec exists.
 | [0014](0014-collision.md) | Boxes, spheres, rays, swept tests, move and slide |
 | [0015](0015-shadows.md) | Shadow mapping from the one directional light |
 | [0016](0016-parametric-surfaces.md) | Meshes from a formula, and two-sided geometry |
+| [0017](0017-teapot.md) | The Utah teapot, from Newell's Bezier patches |
+| [0018](0018-translucency.md) | Seeing through a thing, by the alpha of its color |
 
 `cargo run --example cubes` draws what specs 0007 through 0012 built: lit,
 textured, depth sorted, instanced geometry with a camera that moves.
@@ -33,3 +35,6 @@ rolled around a room, with a mouse driven camera, collision and shadows.
 
 `cargo run --example klein` is 0016: a Klein bottle built from its formula and
 turned by hand, which is the shape that needs both sides of a surface drawn.
+
+`cargo run --example teapot` is 0017 and 0018: the Utah teapot, and a T that
+turns it to glass.
