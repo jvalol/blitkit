@@ -11,7 +11,7 @@ use crate::mesh::MeshData;
 use crate::shadow;
 use crate::texture::TextureData;
 use render_text::*;
-use scene::{Instance, MeshId, Scene, TextureId};
+use scene::{Batch, Instance, MeshId, Scene, TextureId};
 
 use std::sync::Arc;
 
@@ -53,6 +53,8 @@ pub struct Renderer {
     meshes: Vec<GpuMesh>,
     textures: Vec<wgpu::BindGroup>,
     shadow_pipeline: wgpu::RenderPipeline,
+    /// The far side of translucent geometry, then the near side.
+    translucent_pipelines: [wgpu::RenderPipeline; 2],
     shadow_view: wgpu::TextureView,
     shadow_bind_group: wgpu::BindGroup,
     /// What the light's view covers. A game sets it to fit its world.
@@ -273,7 +275,22 @@ impl Renderer {
             &camera_bind_group_layout,
             &texture_bind_group_layout,
             &shadow_bind_group_layout,
+            depth::mesh_primitive_state(),
+            depth::state(),
         );
+        // the same shader twice more, for the far side of a translucent shape
+        // and then its near side, per spec 0018
+        let translucent_pipelines = [wgpu::Face::Front, wgpu::Face::Back].map(|cull| {
+            create_mesh_pipeline(
+                &device,
+                config.format,
+                &camera_bind_group_layout,
+                &texture_bind_group_layout,
+                &shadow_bind_group_layout,
+                depth::translucent_primitive_state(cull),
+                depth::translucent_state(),
+            )
+        });
         let instance_buffer = create_buffer(&device, 0, wgpu::BufferUsages::VERTEX);
 
         let mut renderer = Self {
@@ -295,6 +312,7 @@ impl Renderer {
             text_brush,
             depth,
             mesh_pipeline,
+            translucent_pipelines,
             meshes: Vec::new(),
             textures: Vec::new(),
             shadow_pipeline,
@@ -523,7 +541,10 @@ impl Renderer {
                 label: Some("Renderer Encoder"),
             });
 
-        let batches = self.upload_instances(scene);
+        let (opaque, translucent) = self.upload_instances(scene);
+        // the light sees translucent things as solid: a shadow map holds a
+        // depth and has nowhere to put an alpha
+        let batches: Vec<Batch> = opaque.iter().chain(translucent.iter()).copied().collect();
 
         // what the light can see, first of all. Skipped when nothing is drawn in
         // 3D: the instance buffer is empty then, and slicing an empty buffer is
@@ -589,20 +610,36 @@ impl Renderer {
             // This pass clears the frame, so it runs even with nothing 3D in
             // it. Only the drawing waits on an instance buffer that exists.
             if !batches.is_empty() {
-                mesh_pass.set_pipeline(&self.mesh_pipeline);
                 mesh_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 mesh_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
-                for (mesh_id, texture_id, first, count) in batches.iter() {
-                    let mesh = &self.meshes[mesh_id.0];
-                    if mesh.index_count == 0 {
+                // solid first, so it is in the depth buffer before anything is
+                // blended over it. Then the far side of everything see-through,
+                // then the near side, per spec 0018.
+                let runs = [
+                    (&self.mesh_pipeline, &opaque),
+                    (&self.translucent_pipelines[0], &translucent),
+                    (&self.translucent_pipelines[1], &translucent),
+                ];
+
+                for (pipeline, batches) in runs {
+                    if batches.is_empty() {
                         continue;
                     }
-                    mesh_pass.set_bind_group(1, &self.textures[texture_id.0], &[]);
-                    mesh_pass.set_bind_group(2, &self.shadow_bind_group, &[]);
-                    mesh_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                    mesh_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                    mesh_pass.draw_indexed(0..mesh.index_count, 0, *first..(*first + *count));
+                    mesh_pass.set_pipeline(pipeline);
+
+                    for (mesh_id, texture_id, first, count) in batches.iter() {
+                        let mesh = &self.meshes[mesh_id.0];
+                        if mesh.index_count == 0 {
+                            continue;
+                        }
+                        mesh_pass.set_bind_group(1, &self.textures[texture_id.0], &[]);
+                        mesh_pass.set_bind_group(2, &self.shadow_bind_group, &[]);
+                        mesh_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                        mesh_pass
+                            .set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                        mesh_pass.draw_indexed(0..mesh.index_count, 0, *first..(*first + *count));
+                    }
                 }
             }
         }
@@ -643,10 +680,13 @@ impl Renderer {
     }
 
     /// Packs every instance into one buffer and says where each mesh's run
-    /// starts, so each mesh is one instanced draw.
-    fn upload_instances(&mut self, scene: &Scene) -> Vec<(MeshId, TextureId, u32, u32)> {
+    /// starts, so each mesh is one instanced draw. The opaque runs come back
+    /// separately from the translucent ones, because they are drawn in
+    /// different passes, per spec 0018.
+    fn upload_instances(&mut self, scene: &Scene) -> (Vec<Batch>, Vec<Batch>) {
         let mut instances: Vec<Instance> = Vec::new();
-        let mut batches = Vec::new();
+        let mut opaque = Vec::new();
+        let mut translucent = Vec::new();
 
         for (mesh, texture, mesh_instances) in scene.batches() {
             if mesh.0 >= self.meshes.len() {
@@ -660,17 +700,26 @@ impl Renderer {
                 );
                 continue;
             }
-            batches.push((
-                mesh,
-                texture,
-                instances.len() as u32,
-                mesh_instances.len() as u32,
-            ));
-            instances.extend_from_slice(mesh_instances);
+
+            // one mesh can be drawn solid here and see-through there, so the
+            // split is per instance and each half gets its own run
+            for (list, wanted) in [(&mut opaque, false), (&mut translucent, true)] {
+                let first = instances.len() as u32;
+                instances.extend(
+                    mesh_instances
+                        .iter()
+                        .filter(|instance| instance.is_translucent() == wanted),
+                );
+
+                let count = instances.len() as u32 - first;
+                if count > 0 {
+                    list.push((mesh, texture, first, count));
+                }
+            }
         }
 
         if instances.is_empty() {
-            return batches;
+            return (opaque, translucent);
         }
 
         let bytes: &[u8] = bytemuck::cast_slice(&instances);
@@ -681,7 +730,7 @@ impl Renderer {
             self.queue.write_buffer(&self.instance_buffer, 0, bytes);
         }
 
-        batches
+        (opaque, translucent)
     }
 
     /// Writes this frame's quads into the vertex and index buffers, growing them when they are too small.
@@ -814,6 +863,8 @@ fn create_mesh_pipeline(
     camera_bind_group_layout: &wgpu::BindGroupLayout,
     texture_bind_group_layout: &wgpu::BindGroupLayout,
     shadow_bind_group_layout: &wgpu::BindGroupLayout,
+    primitive: wgpu::PrimitiveState,
+    depth_stencil: wgpu::DepthStencilState,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::include_wgsl!("../../res/shaders/mesh.wgsl"));
 
@@ -846,8 +897,8 @@ fn create_mesh_pipeline(
             })],
             compilation_options: Default::default(),
         }),
-        primitive: depth::mesh_primitive_state(),
-        depth_stencil: Some(depth::state()),
+        primitive,
+        depth_stencil: Some(depth_stencil),
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,

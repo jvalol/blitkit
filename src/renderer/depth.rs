@@ -49,6 +49,29 @@ pub fn mesh_primitive_state() -> wgpu::PrimitiveState {
     }
 }
 
+/// Translucent geometry tests against the depth buffer but does not write to
+/// it. Writing would let the near wall of a shape hide its far wall, which is
+/// the thing you are meant to be able to see through it. Opaque geometry drawn
+/// earlier still hides what is behind it, because the test stays on.
+pub fn translucent_state() -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        depth_write_enabled: Some(false),
+        ..state()
+    }
+}
+
+/// Translucent geometry is drawn twice over, because blending takes the far
+/// side before the near one and nothing sorts the triangles. Culling the front
+/// faces leaves the inside of a shape, culling the back ones leaves the
+/// outside, and drawing those in that order is back to front for anything that
+/// is roughly convex.
+pub fn translucent_primitive_state(cull: wgpu::Face) -> wgpu::PrimitiveState {
+    wgpu::PrimitiveState {
+        cull_mode: Some(cull),
+        ..mesh_primitive_state()
+    }
+}
+
 /// The depth buffer and its view, kept together so a resize replaces both.
 pub struct DepthTexture {
     pub view: wgpu::TextureView,
@@ -70,6 +93,31 @@ impl DepthTexture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn translucent_geometry_tests_depth_without_writing_it() {
+        let solid = state();
+        let clear = translucent_state();
+
+        assert_eq!(solid.depth_write_enabled, Some(true));
+        assert_eq!(clear.depth_write_enabled, Some(false));
+        // still tested, so solid things in front of it still hide it
+        assert_eq!(clear.depth_compare, solid.depth_compare);
+        assert_eq!(clear.format, solid.format);
+    }
+
+    #[test]
+    fn translucent_geometry_is_drawn_from_both_sides() {
+        let far = translucent_primitive_state(wgpu::Face::Front);
+        let near = translucent_primitive_state(wgpu::Face::Back);
+
+        assert_eq!(far.cull_mode, Some(wgpu::Face::Front));
+        assert_eq!(near.cull_mode, Some(wgpu::Face::Back));
+        // the near pass matches what solid geometry does, so the outside of a
+        // see-through shape is lit the same way as the outside of a solid one
+        assert_eq!(near.cull_mode, mesh_primitive_state().cull_mode);
+        assert_eq!(far.front_face, mesh_primitive_state().front_face);
+    }
 
     #[test]
     fn depth_texture_matches_the_surface() {

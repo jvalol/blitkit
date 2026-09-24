@@ -61,6 +61,13 @@ impl Instance {
     /// A surface that is neither mirror nor chalk.
     pub const DEFAULT_SHININESS: f32 = 32.0;
 
+    /// Whether this one is drawn see-through. Any alpha short of full is, so a
+    /// game asks for translucency by dimming the alpha of its color and nothing
+    /// else. See spec 0018.
+    pub fn is_translucent(&self) -> bool {
+        self.color[3] < 1.0
+    }
+
     pub fn new(transform: &Transform, color: Vec4, shininess: f32) -> Self {
         let normal = transform.normal_matrix();
 
@@ -76,6 +83,10 @@ impl Instance {
         }
     }
 }
+
+/// One instanced draw: a mesh, its texture, and the run of instances in the
+/// instance buffer that belongs to it.
+pub(crate) type Batch = (MeshId, TextureId, u32, u32);
 
 /// The 3D half of a frame, emptied and refilled like `Geometry`.
 #[derive(Debug, Default)]
@@ -158,6 +169,15 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_instance_is_translucent_when_its_alpha_is_short() {
+        let solid = Instance::new(&Transform::new(), glam::vec4(1.0, 1.0, 1.0, 1.0), 32.0);
+        let clear = Instance::new(&Transform::new(), glam::vec4(1.0, 1.0, 1.0, 0.4), 32.0);
+
+        assert!(!solid.is_translucent());
+        assert!(clear.is_translucent());
+    }
     use glam::Vec3;
 
     #[test]

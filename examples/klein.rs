@@ -6,8 +6,9 @@
 //!
 //! Drag with the left button to turn it any way at all, or hold space to lock
 //! the cursor and keep turning without letting go. Arrows turn it, Q and E roll
-//! it, M swaps the wire mesh for the solid surface, scroll moves closer, R puts
-//! it back, and escape quits.
+//! it, M swaps the wire mesh for the solid surface, T makes that surface glass
+//! so the neck shows through it, scroll moves closer, R puts it back, and
+//! escape quits.
 //!
 //! It turns on its own until you touch it, and again once you let it be.
 
@@ -52,11 +53,20 @@ const KEY_TURN: f32 = 1.6;
 /// Radians per pixel dragged.
 const DRAG_TURN: f32 = 0.008;
 
+/// The glaze, and the same glaze with the alpha taken out of it. Anything short
+/// of a full alpha is drawn see-through, per spec 0018.
+const SOLID: glam::Vec4 = glam::Vec4::new(0.85, 0.45, 0.75, 1.0);
+/// Thinner than it looks it should be: the surface is drawn twice, once for
+/// each side, so a single wall already stacks two of these, and where the neck
+/// runs through the body it stacks four.
+const CLEAR: glam::Vec4 = glam::Vec4::new(0.85, 0.45, 0.75, 0.22);
+
 struct Klein {
     wire: Option<MeshId>,
     solid: Option<MeshId>,
     floor: Option<MeshId>,
     show_wire: bool,
+    see_through: bool,
     /// How the bottle is turned. A quaternion rather than angles, so it turns
     /// freely every way instead of stopping at the top.
     rotation: Quat,
@@ -79,6 +89,7 @@ impl Klein {
             solid: None,
             floor: None,
             show_wire: true,
+            see_through: false,
             rotation: Quat::IDENTITY,
             key_spin: Vec3::ZERO,
             drag: Vec2::ZERO,
@@ -180,19 +191,22 @@ impl Game for Klein {
         text_renderer.reset();
         text_renderer.push_render_text(RenderText {
             position: vec2(20.0, 20.0),
-            text: String::from("drag or arrows to turn, q and e to roll, m for the solid surface"),
+            text: String::from(
+                "drag or arrows to turn, q and e to roll, m for the surface, t for glass",
+            ),
             size: 14.0,
             ..Default::default()
         });
         text_renderer.push_render_text(RenderText {
             position: vec2(20.0, 44.0),
             text: format!(
-                "klein bottle, {}",
+                "klein bottle, {}{}",
                 if self.show_wire {
                     format!("{} by {} ribbons, both sides drawn", U_LINES, V_LINES)
                 } else {
                     format!("{} by {} samples, both sides drawn", U_STEPS, V_STEPS)
-                }
+                },
+                if self.see_through { ", glass" } else { "" }
             ),
             size: 14.0,
             ..Default::default()
@@ -218,8 +232,8 @@ impl Game for Klein {
             &Transform::at(Vec3::ZERO)
                 .with_rotation(self.rotation)
                 .with_scale(Vec3::splat(SIZE)),
-            vec4(0.85, 0.45, 0.75, 1.0),
-            72.0,
+            if self.see_through { CLEAR } else { SOLID },
+            if self.see_through { 120.0 } else { 72.0 },
         );
 
         camera.position = self.camera_position();
@@ -238,6 +252,13 @@ impl Game for Klein {
             KeyboardKey::Q => self.key_spin.z = rate,
             KeyboardKey::E => self.key_spin.z = -rate,
             KeyboardKey::M if held => self.show_wire = !self.show_wire,
+            // glass reads on the solid surface, not on ribbons with gaps
+            KeyboardKey::T if held => {
+                self.see_through = !self.see_through;
+                if self.see_through {
+                    self.show_wire = false;
+                }
+            }
             KeyboardKey::R if held => {
                 self.rotation = Quat::IDENTITY;
                 self.distance = 9.0;
