@@ -373,20 +373,21 @@ impl Renderer {
 
     /// Uploads a mesh once, and hands back the handle a game draws it with.
     pub fn add_mesh(&mut self, data: &MeshData) -> MeshId {
-        let vertices = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Mesh Vertices"),
-                contents: bytemuck::cast_slice(&data.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let indices = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Mesh Indices"),
-                contents: bytemuck::cast_slice(&data.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
+        // an empty mesh is a legal thing to build, a lattice of no lines for
+        // one, and wgpu refuses to make a buffer with nothing in it. It gets
+        // placeholder buffers and an index count of zero, which the passes skip.
+        let vertices = mesh_buffer(
+            &self.device,
+            "Mesh Vertices",
+            bytemuck::cast_slice(&data.vertices),
+            wgpu::BufferUsages::VERTEX,
+        );
+        let indices = mesh_buffer(
+            &self.device,
+            "Mesh Indices",
+            bytemuck::cast_slice(&data.indices),
+            wgpu::BufferUsages::INDEX,
+        );
 
         self.meshes.push(GpuMesh {
             vertices,
@@ -545,6 +546,9 @@ impl Renderer {
 
             for (mesh_id, _, first, count) in batches.iter() {
                 let mesh = &self.meshes[mesh_id.0];
+                if mesh.index_count == 0 {
+                    continue;
+                }
                 shadow_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 shadow_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 shadow_pass.draw_indexed(0..mesh.index_count, 0, *first..(*first + *count));
@@ -583,6 +587,9 @@ impl Renderer {
 
             for (mesh_id, texture_id, first, count) in batches.iter() {
                 let mesh = &self.meshes[mesh_id.0];
+                if mesh.index_count == 0 {
+                    continue;
+                }
                 mesh_pass.set_bind_group(1, &self.textures[texture_id.0], &[]);
                 mesh_pass.set_bind_group(2, &self.shadow_bind_group, &[]);
                 mesh_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
@@ -834,6 +841,22 @@ fn create_mesh_pipeline(
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,
+    })
+}
+
+/// A vertex or index buffer for a mesh. Empty contents get four zero bytes
+/// instead, because `create_buffer_init` panics on nothing at all and an empty
+/// mesh is something a game is allowed to hand over.
+fn mesh_buffer(
+    device: &wgpu::Device,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some(label),
+        contents: if contents.is_empty() { &[0; 4] } else { contents },
+        usage,
     })
 }
 
