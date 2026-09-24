@@ -162,6 +162,146 @@ impl MeshData {
         Self::new(vertices, vec![0, 1, 2, 0, 2, 3])
     }
 
+    /// A mesh built from a formula rather than a list of corners. `point` is
+    /// called with both parameters running from 0 to 1 inclusive, and the
+    /// results are joined into quads. See spec 0016.
+    pub fn surface(u_steps: u32, v_steps: u32, point: impl Fn(f32, f32) -> Vec3) -> Self {
+        let u_steps = u_steps.max(1);
+        let v_steps = v_steps.max(1);
+
+        // half a cell either side: far enough to measure the surface, near
+        // enough to still be measuring this part of it
+        let du = 0.5 / u_steps as f32;
+        let dv = 0.5 / v_steps as f32;
+
+        let mut vertices = Vec::with_capacity(((u_steps + 1) * (v_steps + 1)) as usize);
+        for i in 0..=u_steps {
+            let u = i as f32 / u_steps as f32;
+            for j in 0..=v_steps {
+                let v = j as f32 / v_steps as f32;
+
+                // clamped at the edges, so the formula is never asked for a
+                // parameter it was not given a meaning for
+                let along_u = point((u + du).min(1.0), v) - point((u - du).max(0.0), v);
+                let along_v = point(u, (v + dv).min(1.0)) - point(u, (v - dv).max(0.0));
+                // a direction that has collapsed, as u does at a pole, leaves
+                // a cross product made of rounding error rather than a normal
+                let longest = along_u.length().max(along_v.length());
+                let normal = if along_u.length().min(along_v.length()) < longest * 1e-4 {
+                    Vec3::ZERO
+                } else {
+                    along_u.cross(along_v).normalize_or_zero()
+                };
+
+                vertices.push(Vertex::new(point(u, v).to_array(), normal.to_array(), [u, v]));
+            }
+        }
+
+        let stride = v_steps + 1;
+        let mut indices = Vec::with_capacity((u_steps * v_steps * 6) as usize);
+        for i in 0..u_steps {
+            for j in 0..v_steps {
+                let a = i * stride + j;
+                let b = a + stride;
+
+                // counter-clockwise around u crossed into v, which is the
+                // normal above, per spec 0009
+                indices.extend_from_slice(&[a, b, b + 1, a, b + 1, a + 1]);
+            }
+        }
+
+        Self::new(vertices, indices)
+    }
+
+    /// The same mesh with every triangle present twice, the second wound the
+    /// other way with its normal negated.
+    ///
+    /// Back face culling keeps exactly one of each pair, so a surface with no
+    /// outside is lit correctly whichever side is facing, and the two copies
+    /// never argue over a pixel. See spec 0016.
+    pub fn two_sided(self) -> Self {
+        let count = self.vertices.len() as u32;
+
+        let flipped: Vec<u32> = self
+            .indices
+            .chunks_exact(3)
+            .flat_map(|t| [t[0] + count, t[2] + count, t[1] + count])
+            .collect();
+
+        let mut vertices = self.vertices;
+        vertices.reserve(count as usize);
+        for index in 0..count as usize {
+            let mut back = vertices[index];
+            back.normal = (-Vec3::from(back.normal)).to_array();
+            vertices.push(back);
+        }
+
+        let mut indices = self.indices;
+        indices.extend_from_slice(&flipped);
+
+        Self::new(vertices, indices)
+    }
+
+    /// The same surface with holes cut in it, leaving ribbons along `u_lines`
+    /// lines of constant u and `v_lines` lines of constant v. `thickness` is
+    /// how much of the space between two lines a ribbon covers, from 0 to 1,
+    /// and a ribbon is always at least the cell either side of its line.
+    ///
+    /// What to reach for when the inside of a shape is the interesting part.
+    /// The parameters are read back out of the texture coordinates, so this
+    /// works on a mesh from `surface` and on nothing else. Corners left with no
+    /// triangle on them are dropped. See spec 0016.
+    pub fn lattice(self, u_lines: u32, v_lines: u32, thickness: f32) -> Self {
+        let thickness = thickness.clamp(0.0, 1.0);
+        let on_line = |t: f32, lines: u32| {
+            if lines == 0 {
+                return false;
+            }
+            // distance to the nearest line, measured in spacings
+            let scaled = t * lines as f32;
+            (scaled - scaled.round()).abs() <= thickness * 0.5
+        };
+
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+        let mut moved_to = vec![u32::MAX; self.vertices.len()];
+
+        for triangle in self.indices.chunks_exact(3) {
+            let uv = [triangle[0], triangle[1], triangle[2]]
+                .map(|index| self.vertices[index as usize].uv);
+
+            // one corner on a line keeps the whole triangle, so a ribbon is
+            // never thinner than the cells its line runs through. Asking for
+            // all three instead would leave nothing at all whenever the ribbon
+            // came out narrower than a cell.
+            let along_u = uv.iter().any(|uv| on_line(uv[0], u_lines));
+            let along_v = uv.iter().any(|uv| on_line(uv[1], v_lines));
+            if !along_u && !along_v {
+                continue;
+            }
+
+            for index in triangle {
+                let slot = &mut moved_to[*index as usize];
+                if *slot == u32::MAX {
+                    *slot = vertices.len() as u32;
+                    vertices.push(self.vertices[*index as usize]);
+                }
+                indices.push(*slot);
+            }
+        }
+
+        Self::new(vertices, indices)
+    }
+
+    /// A Klein bottle: Gray's immersion of it in three dimensions, centered on
+    /// the origin and scaled to fit a unit box like the cube and the sphere.
+    ///
+    /// Two-sided already, because the surface has no outside to cull towards.
+    /// See spec 0016.
+    pub fn klein_bottle(u_steps: u32, v_steps: u32) -> Self {
+        Self::surface(u_steps, v_steps, klein_bottle_point).two_sided()
+    }
+
     /// Loads the first model out of a Wavefront OBJ file. Missing normals are
     /// filled in from the face they belong to; missing texture coordinates are
     /// zero.
@@ -239,6 +379,49 @@ impl MeshData {
     }
 }
 
+/// Where a Klein bottle's surface is, for a `u` and a `v` each running from 0
+/// to 1. Gray's parametrization, moved and scaled to sit centered on the origin
+/// inside a unit box like the cube and the sphere.
+///
+/// Public so a game can build its own mesh from the same shape: `surface` with
+/// this makes the solid one, and `lattice` in between makes a wire one. One
+/// long formula rather than the piecewise version, which creases where its two
+/// halves meet. See spec 0016.
+pub fn klein_bottle_point(u: f32, v: f32) -> Vec3 {
+    let (sin_u, cos_u) = (u * std::f32::consts::PI).sin_cos();
+    let (sin_v, cos_v) = (v * std::f32::consts::TAU).sin_cos();
+    let cos2 = cos_u * cos_u;
+    let cos3 = cos2 * cos_u;
+    let cos4 = cos2 * cos2;
+    let cos5 = cos4 * cos_u;
+    let cos6 = cos4 * cos2;
+    let cos7 = cos6 * cos_u;
+
+    let x = -(2.0 / 15.0)
+        * cos_u
+        * (3.0 * cos_v - 30.0 * sin_u + 90.0 * cos4 * sin_u - 60.0 * cos6 * sin_u
+            + 5.0 * cos_u * cos_v * sin_u);
+
+    let y = -(1.0 / 15.0)
+        * sin_u
+        * (3.0 * cos_v - 3.0 * cos2 * cos_v - 48.0 * cos4 * cos_v + 48.0 * cos6 * cos_v
+            - 60.0 * sin_u
+            + 5.0 * cos_u * cos_v * sin_u
+            - 5.0 * cos3 * cos_v * sin_u
+            - 80.0 * cos5 * cos_v * sin_u
+            + 80.0 * cos7 * cos_v * sin_u);
+
+    let z = (2.0 / 15.0) * (3.0 + 5.0 * cos_u * sin_u) * sin_v;
+
+    (Vec3::new(x, y, z) - KLEIN_CENTER) * KLEIN_SCALE
+}
+
+/// Where the raw formula puts the bottle, and how much to shrink it, measured
+/// once off a dense sampling. `mesh::tests::the_klein_bottle_fits_the_unit_box`
+/// is what keeps these honest.
+const KLEIN_CENTER: Vec3 = Vec3::new(0.153_388, 2.103_203, 0.0);
+const KLEIN_SCALE: f32 = 0.237_732_62;
+
 /// Where a mesh sits in the world.
 #[derive(Debug, Copy, Clone)]
 pub struct Transform {
@@ -295,6 +478,212 @@ impl Default for Transform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A sphere as a formula: u goes around, v goes from pole to pole, and u
+    /// crossed into v points away from the center.
+    fn unit_sphere(u: f32, v: f32) -> Vec3 {
+        let theta = u * std::f32::consts::TAU;
+        let phi = v * std::f32::consts::PI;
+
+        Vec3::new(phi.sin() * theta.cos(), phi.cos(), phi.sin() * theta.sin())
+    }
+
+    #[test]
+    fn a_surface_is_a_grid_of_quads() {
+        let data = MeshData::surface(4, 3, unit_sphere);
+
+        // one more vertex than cells along each side, for the far edge
+        assert_eq!(data.vertices.len(), 5 * 4);
+        assert_eq!(data.triangle_count(), 4 * 3 * 2);
+    }
+
+    #[test]
+    fn a_surface_is_never_empty() {
+        let data = MeshData::surface(0, 0, unit_sphere);
+
+        assert_eq!(data.vertices.len(), 4);
+        assert_eq!(data.triangle_count(), 2);
+    }
+
+    #[test]
+    fn surface_normals_come_from_the_formula() {
+        let data = MeshData::surface(24, 16, unit_sphere);
+
+        for vertex in data.vertices.iter() {
+            let position = Vec3::from(vertex.position);
+            let normal = Vec3::from(vertex.normal);
+
+            // the poles have no surface directions to cross, so no normal
+            if normal == Vec3::ZERO {
+                assert!(position.y.abs() > 0.99, "a zero normal away from a pole");
+                continue;
+            }
+
+            assert!(
+                normal.dot(position.normalize()) > 0.99,
+                "the normal at {:?} points {:?}, not outward",
+                position,
+                normal
+            );
+        }
+    }
+
+    #[test]
+    fn a_surface_is_parameterized_from_zero_to_one() {
+        let seen = std::cell::RefCell::new(Vec::new());
+        let data = MeshData::surface(2, 2, |u, v| {
+            seen.borrow_mut().push((u, v));
+            Vec3::new(u, 0.0, v)
+        });
+
+        let seen = seen.into_inner();
+        let (low, high) = seen.iter().fold((1.0f32, 0.0f32), |(low, high), (u, v)| {
+            (low.min(u.min(*v)), high.max(u.max(*v)))
+        });
+        assert_eq!((low, high), (0.0, 1.0), "the formula saw {:?}", (low, high));
+
+        // the corners of the parameter square land in the corners of the mesh
+        let uvs: Vec<[f32; 2]> = data.vertices.iter().map(|vertex| vertex.uv).collect();
+        assert!(uvs.contains(&[0.0, 0.0]));
+        assert!(uvs.contains(&[1.0, 1.0]));
+        assert!(uvs.contains(&[0.5, 0.5]));
+    }
+
+    #[test]
+    fn two_sided_adds_the_other_side() {
+        let one = MeshData::surface(3, 3, unit_sphere);
+        let both = one.clone().two_sided();
+
+        assert_eq!(both.vertices.len(), one.vertices.len() * 2);
+        assert_eq!(both.triangle_count(), one.triangle_count() * 2);
+
+        let count = one.vertices.len() as u32;
+        let front = &one.indices[0..3];
+        let back = &both.indices[one.indices.len()..one.indices.len() + 3];
+
+        // the same corners, in the other order
+        assert_eq!(back, [front[0] + count, front[2] + count, front[1] + count]);
+    }
+
+    #[test]
+    fn the_other_side_faces_the_other_way() {
+        let one = MeshData::surface(3, 3, unit_sphere);
+        let both = one.clone().two_sided();
+
+        for (index, vertex) in one.vertices.iter().enumerate() {
+            let back = both.vertices[one.vertices.len() + index];
+
+            assert_eq!(back.position, vertex.position);
+            assert_eq!(back.uv, vertex.uv);
+            assert_eq!(Vec3::from(back.normal), -Vec3::from(vertex.normal));
+        }
+    }
+
+    #[test]
+    fn the_klein_bottle_closes_on_itself() {
+        // the two ends of the parameter square are the same circle, reflected,
+        // which is the gluing that leaves the surface one-sided
+        for step in 0..16 {
+            let v = step as f32 / 16.0;
+            let start = klein_bottle_point(0.0, v);
+            let end = klein_bottle_point(1.0, (0.5 - v).rem_euclid(1.0));
+
+            assert!(
+                (start - end).length() < 1e-5,
+                "at v {:.2} the ends are {:?} and {:?}",
+                v,
+                start,
+                end
+            );
+        }
+    }
+
+    #[test]
+    fn the_klein_bottle_fits_the_unit_box() {
+        // dense, because a coarse grid never lands on the extremes
+        let bounds = MeshData::klein_bottle(512, 256).bounds();
+
+        assert!(
+            bounds.center().length() < 5e-3,
+            "off center at {:?}",
+            bounds.center()
+        );
+        assert!(
+            (bounds.size().max_element() - 1.0).abs() < 5e-3,
+            "the longest side is {}",
+            bounds.size().max_element()
+        );
+        assert!(bounds.size().max_element() <= 1.0 + 1e-4, "outside the box");
+        assert!(bounds.size().min_element() > 0.0, "flat on an axis");
+    }
+
+    #[test]
+    fn the_klein_bottle_is_two_sided() {
+        let bottle = MeshData::klein_bottle(8, 6);
+        let one_sided = MeshData::surface(8, 6, klein_bottle_point);
+
+        assert_eq!(bottle.triangle_count(), one_sided.triangle_count() * 2);
+    }
+
+    #[test]
+    fn a_lattice_keeps_only_the_ribbons() {
+        const LINES: u32 = 8;
+        const THICKNESS: f32 = 0.05;
+
+        // sixteen cells between one line and the next, so a ribbon is a small
+        // part of the space it sits in
+        let whole = MeshData::surface(128, 128, unit_sphere);
+        let wire = whole.clone().lattice(LINES, LINES, THICKNESS);
+
+        assert!(wire.triangle_count() > 0, "nothing survived");
+        assert!(
+            wire.triangle_count() < whole.triangle_count() / 2,
+            "{} of {} triangles kept, which is not a lattice",
+            wire.triangle_count(),
+            whole.triangle_count()
+        );
+
+        // every triangle that is left has a corner on a line
+        let near = |t: f32| {
+            let scaled = t * LINES as f32;
+            (scaled - scaled.round()).abs() <= THICKNESS * 0.5
+        };
+        for triangle in wire.indices.chunks_exact(3) {
+            let uv = [triangle[0], triangle[1], triangle[2]]
+                .map(|index| wire.vertices[index as usize].uv);
+
+            assert!(
+                uv.iter().any(|uv| near(uv[0])) || uv.iter().any(|uv| near(uv[1])),
+                "a triangle at {:?} is off every line",
+                uv
+            );
+        }
+    }
+
+    #[test]
+    fn a_ribbon_thinner_than_a_cell_is_still_a_ribbon() {
+        // the trap: ask for a ribbon narrower than the grid it is cut from and
+        // a rule that wanted every corner on the line would leave nothing
+        let wire = MeshData::surface(192, 96, unit_sphere).lattice(24, 12, 0.01);
+
+        assert!(wire.triangle_count() > 0, "the whole lattice was cut away");
+    }
+
+    #[test]
+    fn a_lattice_keeps_no_corner_it_does_not_use() {
+        let wire = MeshData::surface(32, 32, unit_sphere).lattice(4, 4, 0.25);
+        let used: std::collections::HashSet<u32> = wire.indices.iter().copied().collect();
+
+        assert_eq!(used.len(), wire.vertices.len(), "orphaned corners are left over");
+    }
+
+    #[test]
+    fn a_lattice_of_no_lines_is_nothing() {
+        let wire = MeshData::surface(16, 16, unit_sphere).lattice(0, 0, 1.0);
+
+        assert_eq!(wire.triangle_count(), 0);
+        assert!(wire.vertices.is_empty());
+    }
 
     #[test]
     fn vertex_has_position_normal_and_uv() {

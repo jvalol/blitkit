@@ -23,9 +23,13 @@ not a priority, and it never changes once a spec exists.
 | [0013](0013-mouse-input.md) | Buttons, the cursor, raw motion, the wheel, cursor lock |
 | [0014](0014-collision.md) | Boxes, spheres, rays, swept tests, move and slide |
 | [0015](0015-shadows.md) | Shadow mapping from the one directional light |
+| [0016](0016-parametric-surfaces.md) | Meshes from a formula, and two-sided geometry |
 
 `cargo run --example cubes` draws what specs 0007 through 0012 built: lit,
 textured, depth sorted, instanced geometry with a camera that moves.
 
 `cargo run --example rolling` is the one to run for 0013 through 0015: a ball
 rolled around a room, with a mouse driven camera, collision and shadows.
+
+`cargo run --example klein` is 0016: a Klein bottle built from its formula and
+turned by hand, which is the shape that needs both sides of a surface drawn.
