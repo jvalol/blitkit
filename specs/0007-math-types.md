@@ -1,6 +1,6 @@
 # 0007 Math types
 
-**Status:** draft
+**Status:** implemented
 **Date:** 2026-09-21
 
 ## Goal
