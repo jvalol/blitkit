@@ -121,8 +121,7 @@ impl Game for Cubes {
         };
 
         // a wide floor, textured if the image loaded
-        let floor_transform =
-            Transform::at(vec3(0.0, -0.5, 0.0)).with_scale(Vec3::splat(20.0));
+        let floor_transform = Transform::at(vec3(0.0, -0.5, 0.0)).with_scale(Vec3::splat(20.0));
         match self.checker {
             Some(checker) => scene.push_textured(
                 floor,
@@ -136,8 +135,7 @@ impl Game for Cubes {
 
         // one spinning in the middle, wearing the same image, tinted red, so a
         // texture and a tint together are visible
-        let spinning =
-            Transform::at(Vec3::ZERO).with_rotation(Quat::from_rotation_y(self.time));
+        let spinning = Transform::at(Vec3::ZERO).with_rotation(Quat::from_rotation_y(self.time));
         match self.checker {
             Some(checker) => {
                 scene.push_textured(cube, checker, &spinning, vec4(0.9, 0.5, 0.5, 1.0), 32.0)

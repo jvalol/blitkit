@@ -111,7 +111,8 @@ impl Klein {
             return;
         }
 
-        self.rotation = (Quat::from_axis_angle(axis.normalize(), angle) * self.rotation).normalize();
+        self.rotation =
+            (Quat::from_axis_angle(axis.normalize(), angle) * self.rotation).normalize();
     }
 }
 
@@ -119,9 +120,14 @@ impl Game for Klein {
     fn load(&mut self, renderer: &mut Renderer) {
         let surface = MeshData::surface(U_STEPS, V_STEPS, klein_bottle_point);
 
-        self.wire = Some(renderer.add_mesh(
-            &surface.clone().lattice(U_LINES, V_LINES, RIBBON).two_sided(),
-        ));
+        self.wire = Some(
+            renderer.add_mesh(
+                &surface
+                    .clone()
+                    .lattice(U_LINES, V_LINES, RIBBON)
+                    .two_sided(),
+            ),
+        );
         self.solid = Some(renderer.add_mesh(&surface.two_sided()));
         self.floor = Some(renderer.add_mesh(&MeshData::plane()));
 

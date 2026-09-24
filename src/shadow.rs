@@ -61,8 +61,7 @@ pub fn light_view_projection(direction: Vec3, bounds: &Aabb) -> Mat4 {
     let near = (-max.z).max(0.0);
     let far = -min.z;
 
-    glam::camera::rh::proj::directx::orthographic(min.x, max.x, min.y, max.y, near, far)
-        * view
+    glam::camera::rh::proj::directx::orthographic(min.x, max.x, min.y, max.y, near, far) * view
 }
 
 fn corners(bounds: &Aabb) -> [Vec3; 8] {

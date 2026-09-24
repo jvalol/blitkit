@@ -3,15 +3,15 @@ pub mod render_text;
 pub mod scene;
 
 use crate::camera::Camera;
+use crate::collision::Aabb;
 use crate::geometry::vertex::*;
+use crate::geometry::Geometry;
 use crate::lighting::Light;
 use crate::mesh::MeshData;
-use crate::collision::Aabb;
 use crate::shadow;
 use crate::texture::TextureData;
-use scene::{Instance, MeshId, Scene, TextureId};
-use crate::geometry::Geometry;
 use render_text::*;
+use scene::{Instance, MeshId, Scene, TextureId};
 
 use std::sync::Arc;
 
@@ -423,7 +423,10 @@ impl Renderer {
             Ok(()) => true,
             Err(e) if locked => {
                 // some platforms only confine the cursor, which is close enough
-                match self.window.set_cursor_grab(winit::window::CursorGrabMode::Confined) {
+                match self
+                    .window
+                    .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                {
                     Ok(()) => true,
                     Err(_) => {
                         log::warn!("could not lock the cursor: {}", e);
@@ -645,7 +648,10 @@ impl Renderer {
                 continue;
             }
             if texture.0 >= self.textures.len() {
-                log::warn!("a scene asked for texture {:?}, which was never added", texture);
+                log::warn!(
+                    "a scene asked for texture {:?}, which was never added",
+                    texture
+                );
                 continue;
             }
             batches.push((
@@ -663,7 +669,8 @@ impl Renderer {
 
         let bytes: &[u8] = bytemuck::cast_slice(&instances);
         if bytes.len() as u64 > self.instance_buffer.size() {
-            self.instance_buffer = create_buffer_init(&self.device, bytes, wgpu::BufferUsages::VERTEX);
+            self.instance_buffer =
+                create_buffer_init(&self.device, bytes, wgpu::BufferUsages::VERTEX);
         } else {
             self.queue.write_buffer(&self.instance_buffer, 0, bytes);
         }
@@ -820,10 +827,7 @@ fn create_mesh_pipeline(
         vertex: wgpu::VertexState {
             module: &shader,
             entry_point: Some("vs_main"),
-            buffers: &[
-                Some(crate::mesh::Vertex::DESC),
-                Some(Instance::DESC),
-            ],
+            buffers: &[Some(crate::mesh::Vertex::DESC), Some(Instance::DESC)],
             compilation_options: Default::default(),
         },
         fragment: Some(wgpu::FragmentState {
@@ -855,7 +859,11 @@ fn mesh_buffer(
 ) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(label),
-        contents: if contents.is_empty() { &[0; 4] } else { contents },
+        contents: if contents.is_empty() {
+            &[0; 4]
+        } else {
+            contents
+        },
         usage,
     })
 }
@@ -976,7 +984,10 @@ mod uniform_tests {
     fn the_scene_uniform_is_laid_out_for_the_gpu() {
         // a uniform block wants each field on a 16 byte boundary
         assert_eq!(std::mem::size_of::<SceneUniform>(), 64 + 16 * 4 + 64);
-        assert_eq!(std::mem::offset_of!(SceneUniform, light_view_projection), 128);
+        assert_eq!(
+            std::mem::offset_of!(SceneUniform, light_view_projection),
+            128
+        );
         assert_eq!(std::mem::offset_of!(SceneUniform, camera_position), 64);
         assert_eq!(std::mem::offset_of!(SceneUniform, light_direction), 80);
         assert_eq!(std::mem::offset_of!(SceneUniform, light_color), 96);

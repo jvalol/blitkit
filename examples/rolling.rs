@@ -120,10 +120,7 @@ impl Game for Rolling {
         });
         text_renderer.push_render_text(RenderText {
             position: glam::vec2(20.0, 44.0),
-            text: format!(
-                "ball {:.1}, {:.1}",
-                self.position.x, self.position.z
-            ),
+            text: format!("ball {:.1}, {:.1}", self.position.x, self.position.z),
             size: 14.0,
             ..Default::default()
         });

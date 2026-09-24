@@ -64,7 +64,12 @@ impl TextureData {
     /// Halves the image until it is one pixel. Without this, a textured floor
     /// seen at an angle shimmers.
     fn build_mips(&mut self) {
-        while self.levels.last().map(|level| level.width.max(level.height)) > Some(1) {
+        while self
+            .levels
+            .last()
+            .map(|level| level.width.max(level.height))
+            > Some(1)
+        {
             let previous = self.levels.last().expect("there is always a base level");
             self.levels.push(halve(previous));
         }
@@ -112,20 +117,30 @@ mod tests {
     /// back either way.
     fn encode(format: image::ImageFormat) -> Vec<u8> {
         let mut bytes = std::io::Cursor::new(Vec::new());
-        let shade = |x: u32, y: u32| if (x + y).is_multiple_of(2) { 255u8 } else { 0u8 };
+        let shade = |x: u32, y: u32| {
+            if (x + y).is_multiple_of(2) {
+                255u8
+            } else {
+                0u8
+            }
+        };
 
         if format == image::ImageFormat::Jpeg {
             let mut image = image::RgbImage::new(8, 8);
             for (x, y, pixel) in image.enumerate_pixels_mut() {
                 *pixel = image::Rgb([shade(x, y); 3]);
             }
-            image.write_to(&mut bytes, format).expect("the image encodes");
+            image
+                .write_to(&mut bytes, format)
+                .expect("the image encodes");
         } else {
             let mut image = image::RgbaImage::new(8, 8);
             for (x, y, pixel) in image.enumerate_pixels_mut() {
                 *pixel = image::Rgba([shade(x, y), shade(x, y), shade(x, y), 255]);
             }
-            image.write_to(&mut bytes, format).expect("the image encodes");
+            image
+                .write_to(&mut bytes, format)
+                .expect("the image encodes");
         }
 
         bytes.into_inner()

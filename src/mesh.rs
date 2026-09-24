@@ -55,10 +55,11 @@ impl MeshData {
     /// The box this mesh fits inside, so a game can build a collider from what
     /// it draws rather than typing the numbers twice. See spec 0014.
     pub fn bounds(&self) -> crate::collision::Aabb {
-        self.vertices.iter().fold(
-            crate::collision::Aabb::empty(),
-            |bounds, vertex| bounds.union_point(Vec3::from(vertex.position)),
-        )
+        self.vertices
+            .iter()
+            .fold(crate::collision::Aabb::empty(), |bounds, vertex| {
+                bounds.union_point(Vec3::from(vertex.position))
+            })
     }
 
     /// A unit cube centered on the origin, with a normal per face rather than
@@ -118,19 +119,12 @@ impl MeshData {
             let phi = std::f32::consts::PI * ring as f32 / rings as f32;
             for segment in 0..=segments {
                 let theta = std::f32::consts::TAU * segment as f32 / segments as f32;
-                let normal = Vec3::new(
-                    phi.sin() * theta.cos(),
-                    phi.cos(),
-                    phi.sin() * theta.sin(),
-                );
+                let normal = Vec3::new(phi.sin() * theta.cos(), phi.cos(), phi.sin() * theta.sin());
 
                 vertices.push(Vertex::new(
                     (normal * 0.5).to_array(),
                     normal.to_array(),
-                    [
-                        segment as f32 / segments as f32,
-                        ring as f32 / rings as f32,
-                    ],
+                    [segment as f32 / segments as f32, ring as f32 / rings as f32],
                 ));
             }
         }
@@ -193,7 +187,11 @@ impl MeshData {
                     along_u.cross(along_v).normalize_or_zero()
                 };
 
-                vertices.push(Vertex::new(point(u, v).to_array(), normal.to_array(), [u, v]));
+                vertices.push(Vertex::new(
+                    point(u, v).to_array(),
+                    normal.to_array(),
+                    [u, v],
+                ));
             }
         }
 
@@ -318,7 +316,10 @@ impl MeshData {
             |_| Ok((Vec::new(), Default::default())),
         )?;
 
-        let model = models.into_iter().next().ok_or(tobj::LoadError::InvalidObjectName)?;
+        let model = models
+            .into_iter()
+            .next()
+            .ok_or(tobj::LoadError::InvalidObjectName)?;
         let mesh = model.mesh;
         let count = mesh.positions.len() / 3;
 
@@ -364,8 +365,10 @@ impl MeshData {
                 triangle[1] as usize,
                 triangle[2] as usize,
             ];
-            let edge1 = Vec3::from(self.vertices[b].position) - Vec3::from(self.vertices[a].position);
-            let edge2 = Vec3::from(self.vertices[c].position) - Vec3::from(self.vertices[a].position);
+            let edge1 =
+                Vec3::from(self.vertices[b].position) - Vec3::from(self.vertices[a].position);
+            let edge2 =
+                Vec3::from(self.vertices[c].position) - Vec3::from(self.vertices[a].position);
             let face = edge1.cross(edge2);
 
             for index in [a, b, c] {
@@ -674,7 +677,11 @@ mod tests {
         let wire = MeshData::surface(32, 32, unit_sphere).lattice(4, 4, 0.25);
         let used: std::collections::HashSet<u32> = wire.indices.iter().copied().collect();
 
-        assert_eq!(used.len(), wire.vertices.len(), "orphaned corners are left over");
+        assert_eq!(
+            used.len(),
+            wire.vertices.len(),
+            "orphaned corners are left over"
+        );
     }
 
     #[test]
@@ -716,11 +723,13 @@ mod tests {
         let mut corners: Vec<[i32; 3]> = cube
             .vertices
             .iter()
-            .map(|v| [
-                (v.position[0] * 2.0) as i32,
-                (v.position[1] * 2.0) as i32,
-                (v.position[2] * 2.0) as i32,
-            ])
+            .map(|v| {
+                [
+                    (v.position[0] * 2.0) as i32,
+                    (v.position[1] * 2.0) as i32,
+                    (v.position[2] * 2.0) as i32,
+                ]
+            })
             .collect();
         corners.sort_unstable();
         corners.dedup();
@@ -747,8 +756,16 @@ mod tests {
     fn a_mesh_knows_its_bounds() {
         let bounds = MeshData::cube().bounds();
 
-        assert!((bounds.min - Vec3::splat(-0.5)).length() < 1e-5, "{:?}", bounds);
-        assert!((bounds.max - Vec3::splat(0.5)).length() < 1e-5, "{:?}", bounds);
+        assert!(
+            (bounds.min - Vec3::splat(-0.5)).length() < 1e-5,
+            "{:?}",
+            bounds
+        );
+        assert!(
+            (bounds.max - Vec3::splat(0.5)).length() < 1e-5,
+            "{:?}",
+            bounds
+        );
 
         // the plane is flat, so its box has no height
         let plane = MeshData::plane().bounds();
@@ -807,7 +824,10 @@ mod tests {
         let wrong = (Mat3::from_mat4(transform.matrix()) * slope).normalize();
         let right = (transform.normal_matrix() * slope).normalize();
 
-        assert!(right.y > wrong.y, "the normal should stay steep, not flatten");
+        assert!(
+            right.y > wrong.y,
+            "the normal should stay steep, not flatten"
+        );
         // and a straight up normal is unchanged either way
         let up = transform.normal_matrix() * Vec3::Y;
         assert!((up.normalize() - Vec3::Y).length() < 1e-5);

@@ -116,13 +116,7 @@ impl Scene {
         color: Vec4,
         shininess: f32,
     ) {
-        self.push_textured(
-            mesh,
-            TextureId::WHITE,
-            transform,
-            color,
-            shininess,
-        );
+        self.push_textured(mesh, TextureId::WHITE, transform, color, shininess);
     }
 
     /// Draws `mesh` wearing `texture`. The color multiplies what is sampled, so
@@ -155,7 +149,9 @@ impl Scene {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.instances.values().all(|instances| instances.is_empty())
+        self.instances
+            .values()
+            .all(|instances| instances.is_empty())
     }
 }
 

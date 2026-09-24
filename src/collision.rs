@@ -182,7 +182,11 @@ impl Ray {
         }
 
         let mut normal = Vec3::ZERO;
-        normal[axis] = if self.direction[axis] < 0.0 { 1.0 } else { -1.0 };
+        normal[axis] = if self.direction[axis] < 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
 
         Some(Hit {
             distance: near,
@@ -299,7 +303,9 @@ pub fn sweep_sphere(sphere: &Sphere, movement: Vec3, box_: &Aabb) -> Option<Hit>
             .map(|hit| hit.distance)
     } else {
         // an edge: the rounded part is a cylinder lying along it
-        let free = (0..3).find(|axis| !beyond[*axis]).expect("two axes are beyond");
+        let free = (0..3)
+            .find(|axis| !beyond[*axis])
+            .expect("two axes are beyond");
         sweep_against_edge(&ray, corner, free, box_, sphere.radius)
     }?;
 
@@ -323,7 +329,13 @@ pub fn sweep_sphere(sphere: &Sphere, movement: Vec3, box_: &Aabb) -> Option<Hit>
 
 /// How far along `ray` a sphere of `radius` first touches the box edge running
 /// along `free` through `corner`.
-fn sweep_against_edge(ray: &Ray, corner: Vec3, free: usize, box_: &Aabb, radius: f32) -> Option<f32> {
+fn sweep_against_edge(
+    ray: &Ray,
+    corner: Vec3,
+    free: usize,
+    box_: &Aabb,
+    radius: f32,
+) -> Option<f32> {
     // flatten out the axis the edge runs along: what is left is a circle
     let others: Vec<usize> = (0..3).filter(|axis| *axis != free).collect();
     let (a, b) = (others[0], others[1]);
@@ -461,7 +473,10 @@ mod tests {
         assert!(box_.intersects(&Aabb::from_center_size(vec3(1.5, 0.0, 0.0), Vec3::ONE)));
         assert!(!box_.intersects(&Aabb::from_center_size(vec3(3.0, 0.0, 0.0), Vec3::ONE)));
         // touching exactly counts, so a ball resting on a floor is in contact
-        assert!(box_.intersects(&Aabb::from_center_size(vec3(2.0, 0.0, 0.0), Vec3::splat(2.0))));
+        assert!(box_.intersects(&Aabb::from_center_size(
+            vec3(2.0, 0.0, 0.0),
+            Vec3::splat(2.0)
+        )));
     }
 
     #[test]
@@ -508,7 +523,11 @@ mod tests {
             .hit_aabb(&unit_box())
             .expect("the ray points straight at it");
 
-        assert!((hit.distance - 4.0).abs() < 1e-5, "distance {}", hit.distance);
+        assert!(
+            (hit.distance - 4.0).abs() < 1e-5,
+            "distance {}",
+            hit.distance
+        );
         assert!((hit.point - vec3(-1.0, 0.0, 0.0)).length() < 1e-5);
         // the face it struck looks back along the ray
         assert!((hit.normal - vec3(-1.0, 0.0, 0.0)).length() < 1e-5);
@@ -529,7 +548,11 @@ mod tests {
             .expect("the ray points straight at it");
 
         // the near surface, not the far one
-        assert!((hit.distance - 3.0).abs() < 1e-5, "distance {}", hit.distance);
+        assert!(
+            (hit.distance - 3.0).abs() < 1e-5,
+            "distance {}",
+            hit.distance
+        );
         assert!((hit.normal - Vec3::Z).length() < 1e-5);
     }
 
@@ -623,7 +646,11 @@ mod tests {
         let hit = sweep_sphere(&ball, vec3(0.0, -8.0, 0.0), &platform)
             .expect("falling onto a platform still stops");
 
-        assert!((hit.distance - 3.6).abs() < 1e-3, "distance {}", hit.distance);
+        assert!(
+            (hit.distance - 3.6).abs() < 1e-3,
+            "distance {}",
+            hit.distance
+        );
         assert!((hit.normal - Vec3::Y).length() < 1e-3, "{:?}", hit.normal);
     }
 
@@ -635,8 +662,16 @@ mod tests {
         let hit = sweep_sphere(&ball, vec3(6.0, 0.0, 0.0), &wall).expect("a wall stops it");
 
         // the wall's near face is at x 2.5, so contact is 0.4 short of it
-        assert!((hit.distance - 2.1).abs() < 1e-3, "distance {}", hit.distance);
-        assert!((hit.normal - vec3(-1.0, 0.0, 0.0)).length() < 1e-3, "{:?}", hit.normal);
+        assert!(
+            (hit.distance - 2.1).abs() < 1e-3,
+            "distance {}",
+            hit.distance
+        );
+        assert!(
+            (hit.normal - vec3(-1.0, 0.0, 0.0)).length() < 1e-3,
+            "{:?}",
+            hit.normal
+        );
     }
 
     #[test]
@@ -666,7 +701,11 @@ mod tests {
         // driven diagonally into a wall that blocks x but not z
         let end = move_and_slide(ball, vec3(4.0, 0.0, 4.0), 1.0, &[wall]);
 
-        assert!(end.x < 1.1, "should be stopped by the wall, x was {}", end.x);
+        assert!(
+            end.x < 1.1,
+            "should be stopped by the wall, x was {}",
+            end.x
+        );
         assert!(end.z > 1.0, "should have slid along it, z was {}", end.z);
     }
 
@@ -684,7 +723,11 @@ mod tests {
         assert!(end.x < 1.1 && end.z < 1.1, "ended at {:?}", end);
         assert!(end.x > -0.1 && end.z > -0.1, "ended at {:?}", end);
         for wall in walls.iter() {
-            assert!(!Sphere::new(end, 0.5).intersects_aabb(wall), "inside a wall at {:?}", end);
+            assert!(
+                !Sphere::new(end, 0.5).intersects_aabb(wall),
+                "inside a wall at {:?}",
+                end
+            );
         }
     }
 
@@ -695,6 +738,10 @@ mod tests {
 
         let end = move_and_slide(ball, vec3(1.0, 2.0, 3.0), 0.5, &[far_away]);
 
-        assert!((end - vec3(0.5, 1.0, 1.5)).length() < 1e-5, "ended at {:?}", end);
+        assert!(
+            (end - vec3(0.5, 1.0, 1.5)).length() < 1e-5,
+            "ended at {:?}",
+            end
+        );
     }
 }

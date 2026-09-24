@@ -186,11 +186,9 @@ impl ApplicationHandler for App {
                 self.game.draw(&mut running.scene, &mut camera);
                 running.renderer.set_camera(camera);
 
-                running.renderer.render(
-                    &running.scene,
-                    &running.geometry,
-                    &running.text_renderer,
-                );
+                running
+                    .renderer
+                    .render(&running.scene, &running.geometry, &running.text_renderer);
             }
             WindowEvent::KeyboardInput {
                 event:
