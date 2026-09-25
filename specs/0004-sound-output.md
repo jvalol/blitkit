@@ -12,6 +12,7 @@ Games play sounds without handling audio device failures themselves.
 `SoundSystem` opens the default output device at startup and plays sounds queued
 with `queue`, mixing whatever overlaps. `queue_spatial` plays through a separate
 spatial output whose emitter position moves per sound. The starting volume is 0.5.
+Where the listener stands and which way it faces is spec 0019.
 
 When no device can be opened, whether none exists or the system refuses the one
 that does, the engine logs a warning and every queued sound is dropped. Games

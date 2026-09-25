@@ -26,6 +26,7 @@ not a priority, and it never changes once a spec exists.
 | [0016](0016-parametric-surfaces.md) | Meshes from a formula, and two-sided geometry |
 | [0017](0017-teapot.md) | The Utah teapot, from Newell's Bezier patches |
 | [0018](0018-translucency.md) | Seeing through a thing, by the alpha of its color |
+| [0019](0019-listener.md) | Ears that can be put somewhere and pointed |
 
 `cargo run --example cubes` draws what specs 0007 through 0012 built: lit,
 textured, depth sorted, instanced geometry with a camera that moves.
