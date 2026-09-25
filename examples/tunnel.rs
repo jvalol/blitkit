@@ -61,16 +61,25 @@ const RINGS_TO_PASS: usize = 14;
 const HOLE: f32 = 0.42;
 /// How thick the ring itself is.
 const RIM: f32 = 0.055;
-/// How far from the middle a ring may sit, leaving it inside the tunnel.
-const RING_WANDER: f32 = 0.42;
+/// How far off the middle every ring sits. Two things pin this. It has to be
+/// more than `HOLE`, or flying straight down the middle would take a ring
+/// without steering once. And it plus the far side of the hole has to stay
+/// inside the tunnel: 0.46 and 0.475 come to 0.935 of the radius.
+const RING_WANDER: f32 = 0.46;
+/// How far around the circle each ring is from the last. The golden angle,
+/// which never settles into a repeating set of directions.
+const RING_TURN: f32 = 2.399_963;
 
 /// Where the `index`th ring is: how far along, and where in the cross section.
-/// Two rates again, so the run never settles into a rhythm.
+///
+/// Every ring sits the same distance off the middle and differs only in which
+/// way, so each is the same size of problem and the clearance against the wall
+/// is one subtraction rather than a guess.
 fn ring(index: usize) -> (f32, Vec2) {
     let step = (index + 1) as f32 / (RINGS_TO_PASS + 1) as f32;
-    let angle = index as f32 * 2.399_963;
+    let (sin, cos) = (index as f32 * RING_TURN).sin_cos();
 
-    (step, vec2(angle.cos(), (angle * 1.7).sin()) * RING_WANDER)
+    (step, vec2(cos, sin) * RING_WANDER)
 }
 
 /// A torus about the y axis, which is the ring before it is turned to face
