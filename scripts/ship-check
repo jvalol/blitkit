@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#
+# ship-check — hard gate: no user-facing text may ship while it still carries
+# the "[COPY - Jake]" marker.
+#
+# The marker means Claude PROPOSED the copy and Jake has NOT yet made it his.
+# Removing it is how Jake signals the text is now in his voice. Only he removes
+# it.
+#
+# This repo went without one until 2026-09-26. A marker sat in README.md for
+# most of a morning and nothing in the repo could have caught it: cargo test
+# does not read prose, and `cargo publish` would have shipped it to crates.io.
+# jva.lol pins the same string in its own scripts/ship-check and PopsicleBoat
+# in lib/popsicleboat/i18n/copy_marker_audit.ex. No CI sees more than one of
+# the three, so changing the string means changing it in all of them by hand,
+# and this comment is the only thing on this side that will say so.
+#
+# What counts as user-facing here:
+#   README.md  — ships to crates.io and GitHub, which is most of what anyone
+#                reads about this crate
+#   site/      — the product site, once there is one (spec 0038 on jva.lol)
+#
+# What deliberately does not: specs/, CLAUDE.md, src/, examples/, commit
+# messages. Those are the repo talking to whoever works on it. The examples'
+# on-screen strings are the arguable case and they are left out on purpose:
+# they are debug readouts in a demo, they change with the code they describe,
+# and a marker rendered into a running window would make the example unusable
+# for the hand checks the specs depend on.
+#
+# FENCED CODE IS EXEMPT, the way jva.lol's is: a marker quoted inside ``` or
+# ~~~ is an artifact being shown, not copy anyone reads as Jake's voice.
+#
+# Plain grep and awk, no ripgrep, so it runs anywhere.
+#
+# Usage: scripts/ship-check   (run from the crate root)
+
+set -uo pipefail
+
+MARKER='[COPY - Jake]'
+
+roots=()
+[ -f README.md ] && roots+=("README.md")
+[ -d site ] && roots+=("site")
+
+if [ "${#roots[@]}" -eq 0 ]; then
+  echo "ship-check: nothing to scan (run from the crate root)." >&2
+  exit 0
+fi
+
+candidates=$(grep -rIlF -e "$MARKER" "${roots[@]}" 2>/dev/null || true)
+
+if [ -z "$candidates" ]; then
+  echo "ship-check: no unclaimed copy markers."
+  exit 0
+fi
+
+# Report only markers OUTSIDE fenced code. An unterminated fence would exempt
+# the rest of a file, so say so rather than swallowing markers quietly.
+hits=$(printf '%s\n' "$candidates" | while IFS= read -r f; do
+  [ -n "$f" ] && awk -v marker="$MARKER" '
+    FNR == 1 { fence = 0 }
+    {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      if (line ~ /^(```|~~~)/) { fence = !fence; next }
+      if (!fence && index($0, marker)) printf "%s:%d:%s\n", FILENAME, FNR, $0
+    }
+    END { if (fence) printf "%s: warning: unterminated code fence, markers after it were not checked\n", FILENAME > "/dev/stderr" }
+  ' "$f"
+done)
+
+if [ -n "$hits" ]; then
+  echo "ship-check: BLOCKED — user-facing text still marked \"$MARKER\":" >&2
+  printf '%s\n' "$hits" >&2
+  echo >&2
+  echo "That copy was proposed, not written by Jake. Rewrite or edit it into" >&2
+  echo "his voice and delete the marker before this can ship." >&2
+  exit 1
+fi
+
+echo "ship-check: no unclaimed copy markers."
+exit 0
