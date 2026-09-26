@@ -2,7 +2,7 @@
 //! neck is visible where it passes through the wall. Spec 0016's parametric
 //! surfaces and two-sided geometry, lit and shadowed by specs 0012 and 0015.
 //!
-//! `cargo run --example klein`
+//! `cargo run --release --example klein`
 //!
 //! Drag with the left button to turn it any way at all, or hold space to lock
 //! the cursor and keep turning without letting go. Arrows turn it, Q and E roll

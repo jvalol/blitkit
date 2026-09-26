@@ -3,7 +3,7 @@
 //! patches, spec 0016's parametric surfaces underneath them, and spec 0018's
 //! translucency for looking inside it.
 //!
-//! `cargo run --example teapot`
+//! `cargo run --release --example teapot`
 //!
 //! Drag with the left button to turn it any way at all, or hold space to lock
 //! the cursor. Arrows turn it, Q and E roll it, T makes it see-through, scroll

@@ -1,10 +1,10 @@
 //! Three cubes and a floor, to see that 3D works: depth sorting, back face
 //! culling, instancing, and a camera that moves.
 //!
-//! `cargo run --example cubes`
+//! `cargo run --release --example cubes`
 //!
 //! The camera orbits on its own. Left and right turn it, up and down raise and
-//! lower it, and escape quits.
+//! lower it, L switches which lights are on, and escape quits.
 //!
 //! Drag with the left button to turn, scroll to move closer or further, and
 //! press space to lock the cursor so turning never stops at the screen edge.

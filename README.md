@@ -18,16 +18,31 @@ The examples below live in this repo. The games are their own repos.
 
 ## Examples
 
-Run any of them with `cargo run --release --example <name>`.
+Each one has its command below. Pressing escape is how to quit.
 
 **teapot**, the Utah teapot, from the points Newell measured off a real one in
 1975. Pressing T makes it translucent.
+
+```
+cargo run --release --example teapot
+```
+
+Drag to turn it any way at all, or use the arrows. Press Q and E to roll it. Press T to make it
+translucent. Scroll to move closer or further. Press R to put it back where it started. And press space to lock
+the cursor.
 
 ![The Utah teapot in white, casting a teapot shaped shadow](https://raw.githubusercontent.com/jvalol/blitzkit/main/media/teapot.png)
 
 ![The same teapot but translucent](https://raw.githubusercontent.com/jvalol/blitzkit/main/media/teapot-glass.png)
 
 **klein**, a Klein bottle you can spin any way you like. M for the solid surface, T for glass.
+
+```
+cargo run --release --example klein
+```
+
+The same controls as the teapot, plus M to swap the wire mesh for the solid
+surface.
 
 ![A Klein bottle drawn as a wire mesh, its neck curving over and back down into
 its body, casting a lattice shadow on the floor](https://raw.githubusercontent.com/jvalol/blitzkit/main/media/klein.png)
@@ -37,15 +52,41 @@ after it passes through the wall](https://raw.githubusercontent.com/jvalol/blitz
 
 **tunnel**, a checkered tunnel that wanders, and rings to fly through.
 
+```
+cargo run --release --example tunnel
+```
+
+Steer with the mouse. It flies itself. It gets faster the further you get, and brushing
+the wall costs you speed. Press space to lock the cursor. Press R to start over.
+
 ![Looking down a tunnel of dark and light checks receding to a vanishing point,
 with a gold ring hanging off centre partway down it](https://raw.githubusercontent.com/jvalol/blitzkit/main/media/tunnel.png)
 
-**cubes**, the lighting. One sun and two lamps going round. L switches between
-them. The sun is a direction with no position, so there's nothing to draw for
-it, and turning it off is the only way to _see_ what it was doing.
+**cubes**, the lighting. A sun, two spots going round, and a lamp between them.
+L takes you through them one kind at a time. The sun is a direction with no
+position, so there's nothing to draw for it, and turning it off is the only way
+to _see_ what it was doing. The spots cast down their cones; the lamp casts
+every way at once.
+
+```
+cargo run --release --example cubes
+```
+
+Same controls, the arrow keys. Using the mouse works as well. Play around.
+
+![Four cubes on a dark checkered floor with the sun and the spots switched off,
+lit by one lamp hanging above them, each cube throwing its shadow off in a
+different direction away from it](https://raw.githubusercontent.com/jvalol/blitzkit/main/media/cubes.png)
 
 **rolling**, the collision. Roll a ball round a walled room with WASD or the arrow keys. It slides
 along the walls instead of going through them.
+
+```
+cargo run --release --example rolling
+```
+
+`WASD` or the arrow keys roll the ball and the camera follows it. Move the mouse to
+swing the camera around, and scroll to zoom.
 
 ## License
 

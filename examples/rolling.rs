@@ -1,7 +1,7 @@
 //! A ball rolled around a walled room, to see collision behave: sliding along
 //! walls, settling in corners, and never passing through anything.
 //!
-//! `cargo run --example rolling`
+//! `cargo run --release --example rolling`
 //!
 //! WASD or the arrows roll the ball, the camera follows it, drag or move the
 //! mouse to swing the camera around, scroll to zoom, and escape quits.
