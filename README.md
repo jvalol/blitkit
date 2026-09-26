@@ -13,13 +13,13 @@ Feel free to follow along!
 - [tetris](https://github.com/jvalol/tetris)
 - [marble](https://github.com/jvalol/marble) first 3d game here
 
-There are also examples in this repo. Not games, just demonstrations.
+There are also examples in this repo. Sibling repos have actual game implementations.
 
 ## Examples
 
 `cargo run --release --example teapot` is the Utah teapot, from the control
-points Martin Newell measured off a real one in 1975. Pressing T
-turns it translucent.
+points Martin Newell measured off a real one in 1975. Press T to
+make it translucent.
 
 ![The Utah teapot in white, spout to the left and handle to the right, casting a
 teapot shaped shadow](https://raw.githubusercontent.com/jvalol/blitzkit/main/media/teapot.png)
@@ -28,7 +28,7 @@ teapot shaped shadow](https://raw.githubusercontent.com/jvalol/blitzkit/main/med
 all showing through the near wall](https://raw.githubusercontent.com/jvalol/blitzkit/main/media/teapot-glass.png)
 
 `cargo run --release --example klein` is a Klein bottle you can turn any way you
-drag it. M swaps the wire mesh for the solid surface and T make it translucent.
+drag it. M swaps the wire mesh for the solid surface and T to make it translucent.
 
 ![A Klein bottle drawn as a wire mesh, its neck curving over and back down into
 its body, casting a lattice shadow on the floor](https://raw.githubusercontent.com/jvalol/blitzkit/main/media/klein.png)
@@ -42,8 +42,6 @@ cargo run --release --example tunnel
 
 ![Looking down a tunnel of dark and light checks receding to a vanishing point,
 with a gold ring hanging off centre partway down it](https://raw.githubusercontent.com/jvalol/blitzkit/main/media/tunnel.png)
-
-Flying down the inside of a surface. Steer through the gold ring.
 
 ## License
 
