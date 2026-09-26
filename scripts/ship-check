@@ -3,9 +3,8 @@
 # ship-check — hard gate: no user-facing text may ship while it still carries
 # the "[COPY - Jake]" marker.
 #
-# The marker means Claude PROPOSED the copy and Jake has NOT yet made it his.
-# Removing it is how Jake signals the text is now in his voice. Only he removes
-# it.
+# The marker means the copy was PROPOSED and Jake has NOT yet made it his.
+# Removing it is how Jake signals the text is now in his voice.
 #
 # This repo went without one until 2026-09-26. A marker sat in README.md for
 # most of a morning and nothing in the repo could have caught it: cargo test
@@ -47,7 +46,12 @@ if [ "${#roots[@]}" -eq 0 ]; then
   exit 0
 fi
 
-candidates=$(grep -rIlF -e "$MARKER" "${roots[@]}" 2>/dev/null || true)
+# Hugo's output under site/public is a copy of the sources already scanned, and
+# site/static/media is images copied in at build time. Scanning either reports
+# the same marker several times over and, worse, would let a stale build
+# directory block on copy that is no longer in any source.
+candidates=$(grep -rIlF -e "$MARKER" "${roots[@]}" 2>/dev/null |
+  grep -vE '^site/(public|static/media|resources)/' || true)
 
 if [ -z "$candidates" ]; then
   echo "ship-check: no unclaimed copy markers."
