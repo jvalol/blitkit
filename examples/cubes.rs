@@ -11,7 +11,7 @@
 
 use blitzkit::camera::Camera;
 use blitzkit::geometry::Geometry;
-use blitzkit::lighting::PointLight;
+use blitzkit::lighting::SpotLight;
 use blitzkit::keyboard::{KeyboardInput, KeyboardKey, KeyboardKeyState};
 use blitzkit::mesh::{MeshData, Transform};
 use blitzkit::mouse::{MouseButton, MouseInput};
@@ -257,7 +257,20 @@ impl Game for Cubes {
             if !self.lights.lamps() {
                 continue;
             }
-            scene.push_light(PointLight::new(at, color, 2.5, 6.0));
+
+            // spots rather than lamps, per spec 0021, aimed down and inward at
+            // the middle. A lamp lights things and casts nothing; a spot has a
+            // direction, so it gets a shadow map and the cubes get shadows that
+            // move with it.
+            scene.push_spot(SpotLight::new(
+                at,
+                (vec3(0.0, -0.4, 0.0) - at).normalize(),
+                color,
+                6.0,
+                14.0,
+                22f32.to_radians(),
+                40f32.to_radians(),
+            ));
 
             // past full brightness, so the ball reads as the thing emitting
             // rather than a small painted sphere. The engine has no emissive
