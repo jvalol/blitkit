@@ -60,9 +60,22 @@ moved and its course runs out to a hundred units, so a positional thud at the
 goal would be panned hard and faded to nothing. That is this gap, described from
 the other side, by a different session on the same day.
 
+**The spatial output fades a sound by the square of its distance from the ears**,
+in the units the ears are spaced in, which is one. That is rodio's doing and not
+this engine's, and it is the first thing to know before using any of this: a
+sound placed ten units from the listener arrives at a hundredth of its volume,
+and forty units is inaudible. A game whose world is larger than a head has to
+map its distances into that range rather than handing over world positions and
+expecting to hear them.
+
+`marble` puts its landing thud one ear spacing from the listener, pointed at the
+marble, which keeps the direction and throws away a distance that was carrying
+nothing. A game where distance should be audible needs to pick its own mapping;
+there is no single right one, which is why the engine does not choose.
+
 ## Out of scope
 
-Distance falloff, doppler, and more than one spatial sound at a time. The
+Choosing that mapping, doppler, and more than one spatial sound at a time. The
 spatial output is a single player whose emitter moves per sound, so two sounds
 overlapping both play from wherever the second one put it. A game that needs
 several at once needs a pool of players, which is not this spec.
