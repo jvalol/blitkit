@@ -1,4 +1,16 @@
-// The camera and the one light, written once per frame.
+// How many lamps fit. Matches lighting::MAX_POINT_LIGHTS. Keep the two in step.
+const MAX_POINT_LIGHTS: u32 = 8u;
+
+// One lamp: two vec4s exactly, because a uniform block aligns every array
+// element to sixteen bytes. Matches GpuPointLight in renderer/mod.rs.
+struct PointLight {
+    // xyz is where it is, w is how far it reaches
+    position_range: vec4<f32>,
+    // rgb is the color, a is the intensity
+    color_intensity: vec4<f32>,
+};
+
+// The camera, the sun and the lamps, written once per frame.
 struct Uniforms {
     view_projection: mat4x4<f32>,
     // xyz is the camera, w is unused padding
@@ -11,6 +23,9 @@ struct Uniforms {
     ambient: vec4<f32>,
     // world to the light's clip space, for the shadow map
     light_view_projection: mat4x4<f32>,
+    // x is how many of the lamps below are real, the rest is padding
+    point_light_count: vec4<u32>,
+    point_lights: array<PointLight, MAX_POINT_LIGHTS>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -96,6 +111,46 @@ fn vs_main(
     return out;
 }
 
+// What one lamp adds, matching PointLight::shade in src/lighting.rs. Keep the
+// two in step.
+//
+// The falloff is (1 - d/range) squared rather than inverse square: it reaches
+// exactly nothing at the range, and it does not go to infinity at the lamp. See
+// spec 0020. No ambient here, because the sun owns that.
+fn point_light(
+    lamp: PointLight,
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_viewer: vec3<f32>,
+    base: vec3<f32>,
+    shininess: f32,
+) -> vec3<f32> {
+    let range = lamp.position_range.w;
+    if range <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    let offset = lamp.position_range.xyz - world_position;
+    let distance = length(offset);
+    let left = 1.0 - clamp(distance / range, 0.0, 1.0);
+    let faded = left * left;
+    if faded <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    let to_light = normalize(offset);
+    let lambert = max(dot(normal, to_light), 0.0);
+    if lambert <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    let light = lamp.color_intensity.rgb * lamp.color_intensity.a * faded;
+    let half_vector = normalize(to_light + to_viewer);
+    let specular = light * pow(max(dot(normal, half_vector), 0.0), max(shininess, 1.0));
+
+    return base * light * lambert + specular;
+}
+
 // Blinn-Phong, matching Light::shade in src/lighting.rs. Keep the two in step.
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -120,6 +175,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let sampled = textureSample(surface_texture, surface_sampler, in.uv);
     let base = in.color * sampled;
 
-    let shaded = base.rgb * (uniforms.ambient.rgb + diffuse * lit) + specular * lit;
+    var shaded = base.rgb * (uniforms.ambient.rgb + diffuse * lit) + specular * lit;
+
+    // the lamps on top of the sun. They cast no shadow, so `lit` does not
+    // touch them: a lamp inside a shadow still lights what is next to it.
+    let lamps = min(uniforms.point_light_count.x, MAX_POINT_LIGHTS);
+    for (var index = 0u; index < lamps; index++) {
+        shaded += point_light(
+            uniforms.point_lights[index],
+            in.world_position,
+            normal,
+            to_viewer,
+            base.rgb,
+            in.shininess,
+        );
+    }
+
     return vec4<f32>(shaded, base.a);
 }

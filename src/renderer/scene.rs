@@ -4,7 +4,7 @@
 //! thing it wants drawn, the same shape as `Geometry::push_quad`, and the
 //! renderer batches everything sharing a mesh into one instanced draw.
 
-use crate::lighting::Light;
+use crate::lighting::{Light, PointLight, MAX_POINT_LIGHTS};
 use crate::mesh::Transform;
 use glam::Vec4;
 use std::collections::HashMap;
@@ -94,8 +94,11 @@ pub struct Scene {
     /// Batched by mesh and texture together, since a draw call can only have
     /// one of each.
     instances: HashMap<(MeshId, TextureId), Vec<Instance>>,
-    /// The one light in the scene. A game changes it like anything else.
+    /// The sun. A game changes it like anything else, and it persists, because
+    /// a sun does.
     pub light: Light,
+    /// The lamps, refilled each frame like the instances. See spec 0020.
+    point_lights: Vec<PointLight>,
 }
 
 impl Scene {
@@ -108,6 +111,27 @@ impl Scene {
         for instances in self.instances.values_mut() {
             instances.clear();
         }
+        self.point_lights.clear();
+    }
+
+    /// Adds a lamp for this frame, per spec 0020.
+    ///
+    /// Past [`MAX_POINT_LIGHTS`] the extra ones are dropped and said so, rather
+    /// than quietly going missing or costing the frame.
+    pub fn push_light(&mut self, light: PointLight) {
+        if self.point_lights.len() >= MAX_POINT_LIGHTS {
+            log::warn!(
+                "a scene pushed more than {} point lights; the rest are dropped",
+                MAX_POINT_LIGHTS
+            );
+            return;
+        }
+
+        self.point_lights.push(light);
+    }
+
+    pub fn point_lights(&self) -> &[PointLight] {
+        &self.point_lights
     }
 
     /// Draws `mesh` at `transform`, in white.
@@ -169,6 +193,44 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn lamp(at: f32) -> PointLight {
+        PointLight::new(glam::Vec3::splat(at), glam::Vec3::ONE, 1.0, 5.0)
+    }
+
+    #[test]
+    fn point_lights_are_cleared_with_the_scene() {
+        let mut scene = Scene::new();
+        scene.push_light(lamp(1.0));
+        scene.push_light(lamp(2.0));
+        assert_eq!(scene.point_lights().len(), 2);
+
+        scene.reset();
+
+        assert!(scene.point_lights().is_empty(), "a lamp outlived its frame");
+    }
+
+    #[test]
+    fn only_the_first_eight_lights_are_kept() {
+        let mut scene = Scene::new();
+        for index in 0..MAX_POINT_LIGHTS + 4 {
+            scene.push_light(lamp(index as f32));
+        }
+
+        assert_eq!(scene.point_lights().len(), MAX_POINT_LIGHTS);
+        // the first pushed survive, not the last: dropping the ones a game
+        // already placed to make room for later ones would be worse
+        assert_eq!(scene.point_lights()[0].position.x, 0.0);
+        assert_eq!(
+            scene.point_lights()[MAX_POINT_LIGHTS - 1].position.x,
+            (MAX_POINT_LIGHTS - 1) as f32
+        );
+    }
+
+    #[test]
+    fn a_fresh_scene_has_no_lamps() {
+        assert!(Scene::new().point_lights().is_empty());
+    }
 
     #[test]
     fn an_instance_is_translucent_when_its_alpha_is_short() {

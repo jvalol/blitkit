@@ -141,6 +141,7 @@ impl Renderer {
             contents: bytemuck::cast_slice(&[SceneUniform::new(
                 &camera,
                 &Light::new(),
+                &[],
                 &shadow::default_bounds(),
             )]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -521,6 +522,7 @@ impl Renderer {
             bytemuck::cast_slice(&[SceneUniform::new(
                 &self.camera,
                 &scene.light,
+                scene.point_lights(),
                 &self.scene_bounds,
             )]),
         );
@@ -779,8 +781,33 @@ fn create_buffer_init(
     })
 }
 
-/// The camera and the light, as the GPU sees them. Every field is padded out
-/// to four floats because that is how a uniform block is laid out.
+/// One lamp as the shader reads it. Two vec4s exactly: a uniform block aligns
+/// every array element to sixteen bytes, so anything that is not a multiple of
+/// that gets padding the Rust side does not know about. Packing the range and
+/// the intensity into the spare slots is what keeps it honest.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, Default)]
+struct GpuPointLight {
+    /// xyz is where it is, w is how far it reaches.
+    position_range: [f32; 4],
+    /// rgb is the color, a is the intensity.
+    color_intensity: [f32; 4],
+}
+
+unsafe impl bytemuck::Pod for GpuPointLight {}
+unsafe impl bytemuck::Zeroable for GpuPointLight {}
+
+impl GpuPointLight {
+    fn new(light: &crate::lighting::PointLight) -> Self {
+        Self {
+            position_range: light.position.extend(light.range.max(0.0)).to_array(),
+            color_intensity: light.color.extend(light.intensity).to_array(),
+        }
+    }
+}
+
+/// The camera, the sun and the lamps, as the GPU sees them. Every field is
+/// padded out to four floats because that is how a uniform block is laid out.
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 struct SceneUniform {
@@ -792,13 +819,30 @@ struct SceneUniform {
     ambient: [f32; 4],
     /// World to the light's clip space, for the shadow map.
     light_view_projection: [f32; 16],
+    /// x is how many of the lamps below are real. The rest is padding, because
+    /// the block after it has to start on sixteen bytes.
+    point_light_count: [u32; 4],
+    point_lights: [GpuPointLight; crate::lighting::MAX_POINT_LIGHTS],
 }
 
 unsafe impl bytemuck::Pod for SceneUniform {}
 unsafe impl bytemuck::Zeroable for SceneUniform {}
 
 impl SceneUniform {
-    fn new(camera: &Camera, light: &Light, bounds: &Aabb) -> Self {
+    fn new(
+        camera: &Camera,
+        light: &Light,
+        lamps: &[crate::lighting::PointLight],
+        bounds: &Aabb,
+    ) -> Self {
+        // the scene caps this already, per spec 0020, but the array is fixed
+        // and reading past it would be a different kind of bug
+        let used = lamps.len().min(crate::lighting::MAX_POINT_LIGHTS);
+        let mut point_lights = [GpuPointLight::default(); crate::lighting::MAX_POINT_LIGHTS];
+        for (slot, lamp) in point_lights.iter_mut().zip(&lamps[..used]) {
+            *slot = GpuPointLight::new(lamp);
+        }
+
         Self {
             view_projection: camera.view_projection().to_cols_array(),
             camera_position: camera.position.extend(0.0).to_array(),
@@ -807,6 +851,8 @@ impl SceneUniform {
             ambient: light.ambient.extend(0.0).to_array(),
             light_view_projection: shadow::light_view_projection(light.direction, bounds)
                 .to_cols_array(),
+            point_light_count: [used as u32, 0, 0, 0],
+            point_lights,
         }
     }
 }
@@ -1036,11 +1082,15 @@ mod tests {
 #[cfg(test)]
 mod uniform_tests {
     use super::*;
+    use crate::lighting::{PointLight, MAX_POINT_LIGHTS};
 
     #[test]
     fn the_scene_uniform_is_laid_out_for_the_gpu() {
         // a uniform block wants each field on a 16 byte boundary
-        assert_eq!(std::mem::size_of::<SceneUniform>(), 64 + 16 * 4 + 64);
+        assert_eq!(
+            std::mem::size_of::<SceneUniform>(),
+            64 + 16 * 4 + 64 + 16 + 32 * MAX_POINT_LIGHTS
+        );
         assert_eq!(
             std::mem::offset_of!(SceneUniform, light_view_projection),
             128
@@ -1049,16 +1099,87 @@ mod uniform_tests {
         assert_eq!(std::mem::offset_of!(SceneUniform, light_direction), 80);
         assert_eq!(std::mem::offset_of!(SceneUniform, light_color), 96);
         assert_eq!(std::mem::offset_of!(SceneUniform, ambient), 112);
+        assert_eq!(std::mem::offset_of!(SceneUniform, point_light_count), 192);
+        assert_eq!(std::mem::offset_of!(SceneUniform, point_lights), 208);
+
+        for offset in [0, 64, 80, 96, 112, 128, 192, 208] {
+            assert_eq!(offset % 16, 0, "{} is not on sixteen bytes", offset);
+        }
     }
 
     #[test]
     fn the_uniform_carries_the_light() {
         let mut light = Light::new();
         light.intensity = 0.5;
-        let uniform = SceneUniform::new(&Camera::new(), &light, &shadow::default_bounds());
+        let uniform = SceneUniform::new(&Camera::new(), &light, &[], &shadow::default_bounds());
 
         assert_eq!(uniform.light_color[3], 0.5);
         // pointing down, as the default light comes from above
         assert!(uniform.light_direction[1] < 0.0);
+    }
+
+    #[test]
+    fn a_lamp_is_two_vec4s_and_nothing_else() {
+        // an array in a uniform block puts each element on sixteen bytes, so a
+        // lamp that is not a multiple of that gets padding the Rust side does
+        // not know about, and every lamp after the first reads shifted
+        assert_eq!(std::mem::size_of::<GpuPointLight>(), 32);
+        assert_eq!(std::mem::offset_of!(GpuPointLight, position_range), 0);
+        assert_eq!(std::mem::offset_of!(GpuPointLight, color_intensity), 16);
+        assert!(std::mem::align_of::<GpuPointLight>() <= 16);
+        assert_eq!(
+            std::mem::size_of::<[GpuPointLight; MAX_POINT_LIGHTS]>(),
+            32 * MAX_POINT_LIGHTS
+        );
+    }
+
+    #[test]
+    fn the_uniform_carries_the_lamps_it_is_given() {
+        let lamps = [
+            PointLight::new(glam::vec3(1.0, 2.0, 3.0), glam::vec3(1.0, 0.0, 0.0), 2.0, 5.0),
+            PointLight::new(glam::vec3(-4.0, 0.0, 0.0), glam::vec3(0.0, 1.0, 0.0), 0.5, 9.0),
+        ];
+        let uniform =
+            SceneUniform::new(&Camera::new(), &Light::new(), &lamps, &shadow::default_bounds());
+
+        assert_eq!(uniform.point_light_count[0], 2);
+        assert_eq!(uniform.point_lights[0].position_range, [1.0, 2.0, 3.0, 5.0]);
+        assert_eq!(uniform.point_lights[0].color_intensity, [1.0, 0.0, 0.0, 2.0]);
+        assert_eq!(uniform.point_lights[1].position_range, [-4.0, 0.0, 0.0, 9.0]);
+        // the rest stay at nothing, so a lamp from a past frame cannot light
+        assert_eq!(uniform.point_lights[2].color_intensity, [0.0; 4]);
+    }
+
+    #[test]
+    fn no_lamps_is_a_count_of_none() {
+        let uniform =
+            SceneUniform::new(&Camera::new(), &Light::new(), &[], &shadow::default_bounds());
+
+        assert_eq!(uniform.point_light_count[0], 0);
+        for lamp in uniform.point_lights.iter() {
+            assert_eq!(lamp.position_range, [0.0; 4]);
+        }
+    }
+
+    #[test]
+    fn more_lamps_than_fit_are_cut_rather_than_overrunning() {
+        let many: Vec<PointLight> = (0..MAX_POINT_LIGHTS + 5)
+            .map(|index| {
+                PointLight::new(glam::Vec3::splat(index as f32), glam::Vec3::ONE, 1.0, 1.0)
+            })
+            .collect();
+        let uniform =
+            SceneUniform::new(&Camera::new(), &Light::new(), &many, &shadow::default_bounds());
+
+        assert_eq!(uniform.point_light_count[0] as usize, MAX_POINT_LIGHTS);
+    }
+
+    #[test]
+    fn a_negative_range_reaches_nothing_rather_than_wrapping() {
+        let bad = PointLight::new(glam::Vec3::ZERO, glam::Vec3::ONE, 1.0, -3.0);
+        let uniform =
+            SceneUniform::new(&Camera::new(), &Light::new(), &[bad], &shadow::default_bounds());
+
+        assert_eq!(uniform.point_lights[0].position_range[3], 0.0);
     }
 }
