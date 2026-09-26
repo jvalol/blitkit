@@ -13,8 +13,11 @@
 # crate excludes that directory from what it publishes. Netlify builds from
 # site/, which cannot see a sibling directory, so the build brings them along.
 [build]
+  # publish and command are resolved RELATIVE TO base, not to the repo root.
+  # Confirmed by a failed deploy on 2026-09-26 that resolved publish to
+  # /opt/build/repo/site/site/public and said so in its "Resolved config".
   base = "site"
-  publish = "site/public"
+  publish = "public"
   command = "./scripts/build"
 
 [build.environment]
