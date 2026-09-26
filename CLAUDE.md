@@ -3,9 +3,9 @@
 A small 2D and 3D game engine over wgpu. A game implements the `Game` trait and
 calls `start()`, and the engine owns the window, the event loop, rendering,
 keyboard and mouse input, and sound. The 3D half adds a camera, meshes with
-instancing, textures, one directional light that casts shadows, and collision
-shapes. Four games in sibling directories exercise it: `pong`, `snake` and
-`tetris` in 2D, and `marble` in 3D.
+instancing, textures, collision shapes, and three kinds of light that cast
+shadows: a sun, lamps, and spots. Five games in sibling directories exercise
+it: `pong`, `snake` and `tetris` in 2D, and `marble` and `slider` in 3D.
 
 ## Build and test
 
@@ -44,17 +44,20 @@ existing specs to stay true.
 - `src/mesh.rs` — 3D vertices, the shapes that ship with the engine, and the
   transform that places one in the world.
 - `src/texture.rs` — images decoded to RGBA, and their mip chains.
-- `src/lighting.rs` — the directional light, and a CPU copy of the shading that
-  `mesh.wgsl` runs.
-- `src/shadow.rs` — the shadow map's matrix, its bias, and the comparison.
+- `src/lighting.rs` — the sun, the lamps and the spots, and a CPU copy of the
+  shading that `mesh.wgsl` runs.
+- `src/shadow.rs` — the matrices, the bias and the comparison behind all three
+  kinds of shadow map: one for the sun, one per spot, and six per casting lamp.
+- `src/teapot.rs` — Newell's control points and the patches built from them.
 - `src/collision.rs` — boxes, spheres, rays, swept tests, move and slide.
 - `src/keyboard.rs` — winit `KeyCode` to the engine's own `KeyboardKey`.
 - `src/mouse.rs` — buttons, cursor position, raw motion, the wheel, cursor lock.
 - `src/sound.rs` — rodio playback, silent when no device opens.
 - `res/` — the font, the quad, mesh and shadow shaders, and the texture the
   examples use. All of it is compiled in.
-- `examples/` — `cubes` for specs 0007 through 0012, `rolling` for 0013 through
-  0015, `klein` for 0016.
+- `examples/` — `cubes` for specs 0007 through 0012 and the lights of 0020
+  through 0022, `rolling` for 0013 through 0015, `klein` and `tunnel` for 0016,
+  `teapot` for 0017. `klein` and `teapot` also show 0018.
 - `specs/` — what the engine promises.
 
 ## Conventions
