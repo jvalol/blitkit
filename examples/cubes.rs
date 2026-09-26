@@ -11,7 +11,7 @@
 
 use blitzkit::camera::Camera;
 use blitzkit::geometry::Geometry;
-use blitzkit::lighting::SpotLight;
+use blitzkit::lighting::{PointLight, SpotLight};
 use blitzkit::keyboard::{KeyboardInput, KeyboardKey, KeyboardKeyState};
 use blitzkit::mesh::{MeshData, Transform};
 use blitzkit::mouse::{MouseButton, MouseInput};
@@ -25,35 +25,44 @@ use glam::{vec3, vec4, Quat, Vec3};
 
 const CHECKER: &[u8] = include_bytes!("../res/textures/checker.png");
 
+/// What is switched on. Three kinds of light, and one mode each with only that
+/// kind, because a shadow is only legible when you know what threw it.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum Lights {
-    Both,
+    All,
     SunOnly,
-    LampsOnly,
+    SpotsOnly,
+    LampOnly,
 }
 
 impl Lights {
     fn next(self) -> Self {
         match self {
-            Self::Both => Self::SunOnly,
-            Self::SunOnly => Self::LampsOnly,
-            Self::LampsOnly => Self::Both,
+            Self::All => Self::SunOnly,
+            Self::SunOnly => Self::SpotsOnly,
+            Self::SpotsOnly => Self::LampOnly,
+            Self::LampOnly => Self::All,
         }
     }
 
     fn sun(self) -> bool {
-        self != Self::LampsOnly
+        matches!(self, Self::All | Self::SunOnly)
     }
 
-    fn lamps(self) -> bool {
-        self != Self::SunOnly
+    fn spots(self) -> bool {
+        matches!(self, Self::All | Self::SpotsOnly)
+    }
+
+    fn lamp(self) -> bool {
+        matches!(self, Self::All | Self::LampOnly)
     }
 
     fn label(self) -> &'static str {
         match self {
-            Self::Both => "sun and lamps",
+            Self::All => "everything at once",
             Self::SunOnly => "the sun alone, so every shadow is its",
-            Self::LampsOnly => "the lamps alone, and nothing casts a shadow",
+            Self::SpotsOnly => "the two spots, each casting inside its own cone",
+            Self::LampOnly => "the one lamp, casting every way at once",
         }
     }
 }
@@ -90,7 +99,7 @@ impl Cubes {
             cube: None,
             floor: None,
             bulb: None,
-            lights: Lights::Both,
+            lights: Lights::All,
             checker: None,
             time: 0.0,
             angle: 0.0,
@@ -181,7 +190,9 @@ impl Game for Cubes {
         text_renderer.push_render_text(RenderText {
             position: glam::vec2(20.0, 108.0),
             color: vec4(0.7, 0.7, 0.75, 1.0),
-            text: String::from("the lamps are the two balls, reaching 6 units and casting nothing"),
+            text: String::from(
+                "two coloured spots, each casting down its cone, and a white lamp casting every way at once",
+            ),
             size: 14.0,
             ..Default::default()
         });
@@ -254,7 +265,7 @@ impl Game for Cubes {
         ];
 
         for (at, color) in lamps {
-            if !self.lights.lamps() {
+            if !self.lights.spots() {
                 continue;
             }
 
@@ -279,6 +290,28 @@ impl Game for Cubes {
                 scene.push_material(
                     bulb,
                     &Transform::at(at).with_scale(Vec3::splat(0.35)),
+                    (color * 3.0).extend(1.0),
+                    8.0,
+                );
+            }
+        }
+
+        // and one lamp rather than a spot, per spec 0022. A spot's shadow is a
+        // cone, so a cube leaving the cone loses its shadow; this one shines
+        // every way at once, and the cubes' shadows swing all the way round it
+        // as it goes past. It orbits inside the three still cubes to make that
+        // the obvious thing about it.
+        if self.lights.lamp() {
+            let lamp = self.time * 0.55;
+            let at = vec3(lamp.cos() * 1.5, 1.7, lamp.sin() * 1.5);
+            let color = vec3(1.0, 0.95, 0.82);
+
+            scene.push_light(PointLight::new(at, color, 1.2, 9.0).casting());
+
+            if let Some(bulb) = self.bulb {
+                scene.push_material(
+                    bulb,
+                    &Transform::at(at).with_scale(Vec3::splat(0.18)),
                     (color * 3.0).extend(1.0),
                     8.0,
                 );

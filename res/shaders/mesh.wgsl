@@ -45,6 +45,10 @@ struct Uniforms {
     // x is how many of the spots below are real
     spot_light_count: vec4<u32>,
     spot_lights: array<SpotLight, MAX_SPOT_LIGHTS>,
+    // x is how many lamps cast, y and z are which lamps those are. A table of
+    // indices rather than a flag on each lamp, because the slot in this table is
+    // what says which six layers a lamp owns. See spec 0022.
+    point_shadow: vec4<u32>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -58,6 +62,8 @@ struct Uniforms {
 @group(2) @binding(1) var shadow_sampler: sampler_comparison;
 // one layer per spot, per spec 0021
 @group(2) @binding(2) var spot_shadow_maps: texture_depth_2d_array;
+// six layers per casting lamp, per spec 0022
+@group(2) @binding(3) var point_shadow_maps: texture_depth_2d_array;
 
 const MIN_BIAS: f32 = 0.0005;
 const MAX_BIAS: f32 = 0.004;
@@ -235,6 +241,132 @@ fn spot_light(
     return base * light * lambert + specular;
 }
 
+// How many lamps may cast, and how much a lamp's distance comparison forgives.
+// Matches lighting::MAX_SHADOWING_POINT_LIGHTS, shadow::POINT_MIN_BIAS and
+// shadow::POINT_BIAS_PER_UNIT. Keep them in step.
+const MAX_SHADOWING_POINT_LIGHTS: u32 = 2u;
+const POINT_MIN_BIAS: f32 = 0.02;
+const POINT_BIAS_PER_UNIT: f32 = 0.01;
+
+// A face's three directions, written out rather than derived, because a shader
+// has no business doing cross products for a constant. Across, up, and the way
+// it looks, in the layer order +x, -x, +y, -y, +z, -z.
+//
+// Matches shadow::face_basis in Rust, which derives these the way `look_at`
+// does and has a test that the two agree. Keep them in step.
+fn point_face_right(face: u32) -> vec3<f32> {
+    switch face {
+        case 0u: { return vec3<f32>(0.0, 0.0, 1.0); }
+        case 1u: { return vec3<f32>(0.0, 0.0, -1.0); }
+        case 2u: { return vec3<f32>(1.0, 0.0, 0.0); }
+        case 3u: { return vec3<f32>(1.0, 0.0, 0.0); }
+        case 4u: { return vec3<f32>(-1.0, 0.0, 0.0); }
+        default: { return vec3<f32>(1.0, 0.0, 0.0); }
+    }
+}
+
+fn point_face_up(face: u32) -> vec3<f32> {
+    switch face {
+        case 2u: { return vec3<f32>(0.0, 0.0, 1.0); }
+        case 3u: { return vec3<f32>(0.0, 0.0, -1.0); }
+        default: { return vec3<f32>(0.0, 1.0, 0.0); }
+    }
+}
+
+fn point_face_forward(face: u32) -> vec3<f32> {
+    switch face {
+        case 0u: { return vec3<f32>(1.0, 0.0, 0.0); }
+        case 1u: { return vec3<f32>(-1.0, 0.0, 0.0); }
+        case 2u: { return vec3<f32>(0.0, 1.0, 0.0); }
+        case 3u: { return vec3<f32>(0.0, -1.0, 0.0); }
+        case 4u: { return vec3<f32>(0.0, 0.0, 1.0); }
+        default: { return vec3<f32>(0.0, 0.0, -1.0); }
+    }
+}
+
+// Which face a direction leaves through, and where on it. The largest component
+// picks the side of the box it reaches first; dividing the other two by it is
+// the same division the projection would have done.
+//
+// Matches shadow::face_and_uv in Rust. Keep the two in step.
+fn point_face_and_uv(direction: vec3<f32>) -> vec3<f32> {
+    let size = abs(direction);
+
+    var axis = 2u;
+    var along = direction.z;
+    if size.x >= size.y && size.x >= size.z {
+        axis = 0u;
+        along = direction.x;
+    } else if size.y >= size.z {
+        axis = 1u;
+        along = direction.y;
+    }
+
+    let face = axis * 2u + select(0u, 1u, along < 0.0);
+    let ahead = dot(point_face_forward(face), direction);
+
+    let u = 0.5 + 0.5 * dot(point_face_right(face), direction) / ahead;
+    let v = 0.5 - 0.5 * dot(point_face_up(face), direction) / ahead;
+
+    return vec3<f32>(f32(face), u, v);
+}
+
+// How much of a lamp reaches a point, out of its six layers. Distance against
+// distance, both as a fraction of the lamp's range.
+//
+// Matches shadow::point_is_lit and shadow::point_bias in Rust. Keep them in
+// step.
+fn point_shadow(lamp: PointLight, slot: u32, world_position: vec3<f32>) -> f32 {
+    let range = lamp.position_range.w;
+    let away = world_position - lamp.position_range.xyz;
+    let distance = length(away);
+    // a lamp that does not reach this far is not shadowing it either
+    if range <= 0.0 || distance > range || distance <= 0.0 {
+        return 1.0;
+    }
+
+    let found = point_face_and_uv(away);
+    let layer = slot * 6u + u32(found.x);
+    let uv = found.yz;
+
+    let bias = (POINT_MIN_BIAS + POINT_BIAS_PER_UNIT * range) / range;
+    let fraction = distance / range;
+
+    // nine samples, the same soft edge the sun and the spots get. Across a face
+    // edge the sampler clamps rather than carrying on into the next face, which
+    // is the one place the six faces show.
+    let texel = 1.0 / f32(textureDimensions(point_shadow_maps).x);
+    var lit = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel;
+            lit += textureSampleCompare(
+                point_shadow_maps,
+                shadow_sampler,
+                uv + offset,
+                layer,
+                fraction - bias,
+            );
+        }
+    }
+
+    return lit / 9.0;
+}
+
+// Which of a lamp's six layers to look in, or none at all. A search of two,
+// because at most two lamps cast. See spec 0022.
+fn point_shadow_slot(index: u32) -> i32 {
+    let casting = min(uniforms.point_shadow.x, MAX_SHADOWING_POINT_LIGHTS);
+    if casting > 0u && index == uniforms.point_shadow.y {
+        return 0;
+    }
+    if casting > 1u && index == uniforms.point_shadow.z {
+        return 1;
+    }
+
+    return -1;
+}
+
 // What one lamp adds, matching PointLight::shade in src/lighting.rs. Keep the
 // two in step.
 //
@@ -243,6 +375,7 @@ fn spot_light(
 // spec 0020. No ambient here, because the sun owns that.
 fn point_light(
     lamp: PointLight,
+    reaching: f32,
     world_position: vec3<f32>,
     normal: vec3<f32>,
     to_viewer: vec3<f32>,
@@ -268,7 +401,11 @@ fn point_light(
         return vec3<f32>(0.0);
     }
 
-    let light = lamp.color_intensity.rgb * lamp.color_intensity.a * faded;
+    if reaching <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    let light = lamp.color_intensity.rgb * lamp.color_intensity.a * faded * reaching;
     let half_vector = normalize(to_light + to_viewer);
     let specular = light * pow(max(dot(normal, half_vector), 0.0), max(shininess, 1.0));
 
@@ -301,12 +438,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var shaded = base.rgb * (uniforms.ambient.rgb + diffuse * lit) + specular * lit;
 
-    // the lamps on top of the sun. They cast no shadow, so `lit` does not
-    // touch them: a lamp inside a shadow still lights what is next to it.
+    // the lamps on top of the sun. The sun's own `lit` does not touch them: a
+    // lamp inside a shadow still lights what is next to it. A lamp that asked
+    // to cast carries its own shadow instead, per spec 0022.
     let lamps = min(uniforms.point_light_count.x, MAX_POINT_LIGHTS);
     for (var index = 0u; index < lamps; index++) {
+        let lamp = uniforms.point_lights[index];
+        let slot = point_shadow_slot(index);
+        var reaching = 1.0;
+        if slot >= 0 {
+            reaching = point_shadow(lamp, u32(slot), in.world_position);
+        }
+
         shaded += point_light(
-            uniforms.point_lights[index],
+            lamp,
+            reaching,
             in.world_position,
             normal,
             to_viewer,

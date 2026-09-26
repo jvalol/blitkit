@@ -59,3 +59,58 @@ fn vs_main(
 
     return uniforms.spot_lights[which.index.x].view_projection * world;
 }
+
+// --- point light faces, spec 0022 -------------------------------------------
+//
+// A lamp needs six of these passes, one along each axis, so what the pass is
+// for is a layer number from nought to eleven rather than a light number. The
+// matrix and the lamp both come from the layer.
+//
+// Unlike the sun and the spots, this one has a fragment stage: what goes in the
+// map is distance from the lamp, not whatever depth the projection produced,
+// because a reading has to mean the same thing on all six faces.
+
+struct PointFace {
+    view_projection: mat4x4<f32>,
+    // xyz is the lamp, w is how far it reaches
+    position_range: vec4<f32>,
+};
+
+struct PointFaces {
+    faces: array<PointFace, 12>,
+};
+
+@group(2) @binding(0) var<uniform> point_faces: PointFaces;
+
+struct PointOut {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) world_position: vec3<f32>,
+};
+
+@vertex
+fn vs_point(
+    @location(0) position: vec3<f32>,
+    @location(3) model_0: vec4<f32>,
+    @location(4) model_1: vec4<f32>,
+    @location(5) model_2: vec4<f32>,
+    @location(6) model_3: vec4<f32>,
+) -> PointOut {
+    let model = mat4x4<f32>(model_0, model_1, model_2, model_3);
+    let world = model * vec4<f32>(position, 1.0);
+
+    var out: PointOut;
+    out.clip_position = point_faces.faces[which.index.x].view_projection * world;
+    out.world_position = world.xyz;
+    return out;
+}
+
+// Matches shadow::point_distance_fraction in Rust. Keep the two in step.
+@fragment
+fn fs_point(in: PointOut) -> @builtin(frag_depth) f32 {
+    let lamp = point_faces.faces[which.index.x].position_range;
+    if lamp.w <= 0.0 {
+        return 1.0;
+    }
+
+    return clamp(distance(in.world_position, lamp.xyz) / lamp.w, 0.0, 1.0);
+}

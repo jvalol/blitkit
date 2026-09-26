@@ -4,7 +4,9 @@
 //! thing it wants drawn, the same shape as `Geometry::push_quad`, and the
 //! renderer batches everything sharing a mesh into one instanced draw.
 
-use crate::lighting::{Light, PointLight, SpotLight, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS};
+use crate::lighting::{
+    Light, PointLight, SpotLight, MAX_POINT_LIGHTS, MAX_SHADOWING_POINT_LIGHTS, MAX_SPOT_LIGHTS,
+};
 use crate::mesh::Transform;
 use glam::Vec4;
 use std::collections::HashMap;
@@ -122,7 +124,11 @@ impl Scene {
     ///
     /// Past [`MAX_POINT_LIGHTS`] the extra ones are dropped and said so, rather
     /// than quietly going missing or costing the frame.
-    pub fn push_light(&mut self, light: PointLight) {
+    ///
+    /// A lamp asking to cast past [`MAX_SHADOWING_POINT_LIGHTS`] keeps its
+    /// light and loses its shadow, per spec 0022. Dropping the whole lamp over
+    /// it would take away more than was asked for.
+    pub fn push_light(&mut self, mut light: PointLight) {
         if self.point_lights.len() >= MAX_POINT_LIGHTS {
             log::warn!(
                 "a scene pushed more than {} point lights; the rest are dropped",
@@ -131,11 +137,28 @@ impl Scene {
             return;
         }
 
+        if light.casts && self.casting_lamps().len() >= MAX_SHADOWING_POINT_LIGHTS {
+            log::warn!(
+                "a scene asked more than {} point lights to cast shadows; the rest light without one",
+                MAX_SHADOWING_POINT_LIGHTS
+            );
+            light.casts = false;
+        }
+
         self.point_lights.push(light);
     }
 
     pub fn point_lights(&self) -> &[PointLight] {
         &self.point_lights
+    }
+
+    /// Which of the lamps cast, by their place in [`Scene::point_lights`].
+    ///
+    /// The shader is given these indices rather than a flag on each lamp, so
+    /// the six layers a casting lamp owns can be found from its place in this
+    /// list. See spec 0022.
+    pub fn casting_lamps(&self) -> Vec<usize> {
+        crate::lighting::casting_lamps(&self.point_lights)
     }
 
     /// Adds a spot for this frame, per spec 0021.
@@ -380,5 +403,51 @@ mod tests {
 
         assert!(scene.is_empty());
         assert!(scene.batches().is_empty());
+    }
+
+    #[test]
+    fn only_two_lamps_may_cast() {
+        let mut scene = Scene::new();
+        for at in 0..5 {
+            scene.push_light(lamp(at as f32).casting());
+        }
+
+        assert_eq!(scene.point_lights().len(), 5, "a lamp went missing");
+        assert_eq!(
+            scene.casting_lamps(),
+            vec![0, 1],
+            "the wrong lamps got the shadows"
+        );
+
+        // the three that were refused still light, which is the whole point of
+        // refusing the shadow rather than the lamp
+        for light in &scene.point_lights()[2..] {
+            assert!(!light.casts);
+            assert!(light.falloff(1.0) > 0.0, "a refused lamp stopped lighting");
+        }
+    }
+
+    #[test]
+    fn a_lamp_that_does_not_ask_does_not_take_a_slot() {
+        let mut scene = Scene::new();
+        scene.push_light(lamp(0.0));
+        scene.push_light(lamp(1.0).casting());
+        scene.push_light(lamp(2.0));
+        scene.push_light(lamp(3.0).casting());
+
+        assert_eq!(scene.casting_lamps(), vec![1, 3]);
+    }
+
+    #[test]
+    fn casting_lamps_are_cleared_with_the_scene() {
+        let mut scene = Scene::new();
+        scene.push_light(lamp(0.0).casting());
+        scene.reset();
+
+        assert!(scene.casting_lamps().is_empty());
+        // and the slots are free again, not spent for good
+        scene.push_light(lamp(1.0).casting());
+        scene.push_light(lamp(2.0).casting());
+        assert_eq!(scene.casting_lamps().len(), 2);
     }
 }

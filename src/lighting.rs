@@ -61,8 +61,33 @@ impl Default for Light {
 /// How many lamps fit in the block the shader reads. See spec 0020.
 pub const MAX_POINT_LIGHTS: usize = 8;
 
-/// A light with a place, and a distance past which it stops. Unlike the sun it
-/// casts no shadow, because there is one shadow map and it belongs to the sun.
+/// How many lamps may cast a shadow, out of the [`MAX_POINT_LIGHTS`] that may
+/// light. Each one is six passes over the scene, which is why it is two and not
+/// eight. See spec 0022.
+pub const MAX_SHADOWING_POINT_LIGHTS: usize = 2;
+
+/// Which lamps out of a list cast, by their place in it, capped at
+/// [`MAX_SHADOWING_POINT_LIGHTS`].
+///
+/// One rule in one place, because three things ask: the scene, the uniform the
+/// shader reads, and the passes that fill the maps. Any two of them disagreeing
+/// would light one lamp and shadow another.
+pub fn casting_lamps(lamps: &[PointLight]) -> Vec<usize> {
+    lamps
+        .iter()
+        .enumerate()
+        .filter(|(_, light)| light.casts)
+        .map(|(index, _)| index)
+        .take(MAX_SHADOWING_POINT_LIGHTS)
+        .collect()
+}
+
+/// A light with a place, and a distance past which it stops.
+///
+/// By default it casts no shadow, because a lamp shines every way at once and
+/// covering that takes six passes over the scene. A lamp that wants one asks
+/// with [`PointLight::casting`], and at most [`MAX_SHADOWING_POINT_LIGHTS`] of
+/// them are granted.
 #[derive(Debug, Copy, Clone)]
 pub struct PointLight {
     pub position: Vec3,
@@ -70,6 +95,9 @@ pub struct PointLight {
     pub intensity: f32,
     /// How far it reaches. Past this it contributes nothing at all.
     pub range: f32,
+    /// Whether it asks for a shadow. Nothing about the light it gives depends
+    /// on this; see spec 0022.
+    pub casts: bool,
 }
 
 impl PointLight {
@@ -79,7 +107,14 @@ impl PointLight {
             color,
             intensity,
             range,
+            casts: false,
         }
+    }
+
+    /// The same lamp, asking for a shadow.
+    pub fn casting(mut self) -> Self {
+        self.casts = true;
+        self
     }
 
     /// How much of the light is left at `distance`: one where it sits, nothing
@@ -539,5 +574,32 @@ mod tests {
 
         // same diffuse, so any difference is the highlight
         assert!(broad.x >= tight.x);
+    }
+
+    #[test]
+    fn a_lamp_does_not_cast_unless_it_asks() {
+        // five games and every example built before spec 0022 make lamps this
+        // way, and none of them should start paying for six passes
+        let plain = PointLight::new(Vec3::ZERO, Vec3::ONE, 1.0, 5.0);
+        assert!(!plain.casts);
+
+        assert!(plain.casting().casts);
+    }
+
+    #[test]
+    fn casting_does_not_change_what_a_lamp_lights() {
+        let plain = PointLight::new(Vec3::Y * 3.0, Vec3::new(1.0, 0.4, 0.2), 1.4, 9.0);
+        let asking = plain.casting();
+
+        let at = Vec3::new(1.0, 0.0, 0.5);
+        let normal = Vec3::Y;
+        let to_viewer = Vec3::new(0.0, 1.0, 1.0).normalize();
+
+        assert_eq!(
+            plain.shade(at, normal, to_viewer, Vec3::ONE, 32.0),
+            asking.shade(at, normal, to_viewer, Vec3::ONE, 32.0),
+            "asking for a shadow changed the light itself"
+        );
+        assert_eq!(plain.falloff(4.0), asking.falloff(4.0));
     }
 }

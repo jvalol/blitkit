@@ -9,6 +9,19 @@ use crate::geometry::Geometry;
 use crate::lighting::Light;
 use crate::mesh::MeshData;
 use crate::shadow;
+
+/// How many layers the lamp shadow stack has: six faces for each lamp that may
+/// cast. See spec 0022.
+const POINT_SHADOW_LAYERS: usize = crate::lighting::MAX_SHADOWING_POINT_LIGHTS * 6;
+
+/// How many different numbers a shadow pass might be told it is for. The sun and
+/// the spots need one each; a lamp's faces need one per layer, and there are
+/// more of those.
+const WHICH_INDEXES: usize = if POINT_SHADOW_LAYERS > crate::lighting::MAX_SPOT_LIGHTS + 1 {
+    POINT_SHADOW_LAYERS
+} else {
+    crate::lighting::MAX_SPOT_LIGHTS + 1
+};
 use crate::texture::TextureData;
 use render_text::*;
 use scene::{Batch, Instance, MeshId, Scene, TextureId};
@@ -53,6 +66,9 @@ pub struct Renderer {
     meshes: Vec<GpuMesh>,
     textures: Vec<wgpu::BindGroup>,
     shadow_pipeline: wgpu::RenderPipeline,
+    /// A second one for a lamp's six faces: it has a fragment stage, because
+    /// what goes in those maps is distance rather than depth. See spec 0022.
+    point_shadow_pipeline: wgpu::RenderPipeline,
     /// One per shadow pass, holding which light that pass is for.
     which_bind_groups: Vec<wgpu::BindGroup>,
     /// The far side of translucent geometry, then the near side.
@@ -61,6 +77,13 @@ pub struct Renderer {
     /// One view per layer of the spot shadow stack, to render into. See spec
     /// 0021.
     spot_shadow_layers: Vec<wgpu::TextureView>,
+    /// One view per layer of the lamp shadow stack, six to a casting lamp. See
+    /// spec 0022.
+    point_shadow_layers: Vec<wgpu::TextureView>,
+    /// The matrix and the lamp for each of those layers, rewritten every frame
+    /// because lamps move.
+    point_faces_buffer: wgpu::Buffer,
+    point_faces_bind_group: wgpu::BindGroup,
     shadow_bind_group: wgpu::BindGroup,
     /// What the light's view covers. A game sets it to fit its world.
     scene_bounds: Aabb,
@@ -260,6 +283,37 @@ impl Renderer {
                 })
             })
             .collect();
+        // six layers per casting lamp, per spec 0022. Smaller again than the
+        // spots': six of these is a lot of map for one light.
+        let point_shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Point Shadow Maps"),
+            size: wgpu::Extent3d {
+                width: shadow::POINT_MAP_SIZE,
+                height: shadow::POINT_MAP_SIZE,
+                depth_or_array_layers: POINT_SHADOW_LAYERS as u32,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: shadow::POINT_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let point_shadow_view = point_shadow_texture.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let point_shadow_layers: Vec<wgpu::TextureView> = (0..POINT_SHADOW_LAYERS)
+            .map(|layer| {
+                point_shadow_texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("Point Shadow Layer"),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: layer as u32,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                })
+            })
+            .collect();
         // a comparison sampler returns how much of the sample passed the depth
         // test rather than a depth, which is what makes the edges soft
         let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -302,6 +356,16 @@ impl Renderer {
                         },
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             });
         let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -317,6 +381,10 @@ impl Renderer {
                     resource: wgpu::BindingResource::TextureView(&spot_shadow_view),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&point_shadow_view),
+                },
+                wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(&shadow_sampler),
                 },
@@ -325,12 +393,14 @@ impl Renderer {
         // one tiny uniform per shadow pass saying which light it belongs to,
         // per spec 0021. A bind group for one number, because the alternative
         // is immediate data and that is a capability not every backend has.
+        // the fragment stage reads it too, because a lamp's pass needs to know
+        // which lamp it is measuring the distance from
         let which_layout = uniform_bind_group_layout(
             &device,
             "Shadow Light Index",
-            wgpu::ShaderStages::VERTEX,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
-        let which_bind_groups: Vec<wgpu::BindGroup> = (0..=crate::lighting::MAX_SPOT_LIGHTS)
+        let which_bind_groups: Vec<wgpu::BindGroup> = (0..WHICH_INDEXES)
             .map(|index| {
                 let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Shadow Light Index"),
@@ -348,8 +418,36 @@ impl Renderer {
             })
             .collect();
 
+        // one matrix and one lamp per layer, indexed by the same number the
+        // `which` uniform carries
+        let point_faces_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Point Shadow Faces"),
+            size: std::mem::size_of::<[GpuPointFace; POINT_SHADOW_LAYERS]>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let point_faces_layout = uniform_bind_group_layout(
+            &device,
+            "Point Shadow Faces",
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
+        );
+        let point_faces_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Point Shadow Faces"),
+            layout: &point_faces_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: point_faces_buffer.as_entire_binding(),
+            }],
+        });
+
         let shadow_pipeline =
             create_shadow_pipeline(&device, &camera_bind_group_layout, &which_layout);
+        let point_shadow_pipeline = create_point_shadow_pipeline(
+            &device,
+            &camera_bind_group_layout,
+            &which_layout,
+            &point_faces_layout,
+        );
         let mesh_pipeline = create_mesh_pipeline(
             &device,
             config.format,
@@ -397,9 +495,13 @@ impl Renderer {
             meshes: Vec::new(),
             textures: Vec::new(),
             shadow_pipeline,
+            point_shadow_pipeline,
             which_bind_groups,
             shadow_view,
             spot_shadow_layers,
+            point_shadow_layers,
+            point_faces_buffer,
+            point_faces_bind_group,
             shadow_bind_group,
             scene_bounds: shadow::default_bounds(),
             texture_bind_group_layout,
@@ -609,6 +711,11 @@ impl Renderer {
                 &self.scene_bounds,
             )]),
         );
+        self.queue.write_buffer(
+            &self.point_faces_buffer,
+            0,
+            bytemuck::cast_slice(&point_faces(scene.point_lights())),
+        );
         self.upload_geometry(geometry);
 
         let sections: Vec<Section> = text_renderer
@@ -673,6 +780,51 @@ impl Renderer {
                 shadow_pass.set_pipeline(&self.shadow_pipeline);
                 shadow_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 shadow_pass.set_bind_group(1, &self.which_bind_groups[which as usize], &[]);
+                shadow_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+
+                for (mesh_id, _, first, count) in batches.iter() {
+                    let mesh = &self.meshes[mesh_id.0];
+                    if mesh.index_count == 0 {
+                        continue;
+                    }
+                    shadow_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    shadow_pass
+                        .set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    shadow_pass.draw_indexed(0..mesh.index_count, 0, *first..(*first + *count));
+                }
+            }
+
+            // then six passes for each lamp that asked to cast, per spec 0022.
+            // Every layer is cleared whether a lamp claimed it or not, for the
+            // same reason the spots' are.
+            let faces = point_faces(scene.point_lights());
+            for (layer, view) in self.point_shadow_layers.iter().enumerate() {
+                let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Point Shadow Pass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(shadow::POINT_CLEAR),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+
+                // no lamp claimed this layer, so it gets its clear and nothing
+                // else
+                if faces[layer].position_range[3] <= 0.0 {
+                    continue;
+                }
+
+                shadow_pass.set_pipeline(&self.point_shadow_pipeline);
+                shadow_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                shadow_pass.set_bind_group(1, &self.which_bind_groups[layer], &[]);
+                shadow_pass.set_bind_group(2, &self.point_faces_bind_group, &[]);
                 shadow_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
 
                 for (mesh_id, _, first, count) in batches.iter() {
@@ -960,6 +1112,45 @@ impl GpuSpotLight {
     }
 }
 
+/// One face of one casting lamp, as the pass that fills it reads it: the matrix
+/// onto that face, and the lamp to measure distance from. 80 bytes, a multiple
+/// of sixteen, so an array of them is not padded apart. See spec 0022.
+#[repr(C)]
+#[derive(Debug, Copy, Clone, Default)]
+struct GpuPointFace {
+    view_projection: [f32; 16],
+    /// xyz is the lamp, w is how far it reaches. A range of zero means this
+    /// layer belongs to no lamp this frame.
+    position_range: [f32; 4],
+}
+
+unsafe impl bytemuck::Pod for GpuPointFace {}
+unsafe impl bytemuck::Zeroable for GpuPointFace {}
+
+/// The twelve layers for a frame, in the order the passes fill them: a casting
+/// lamp's six faces together, then the next lamp's.
+///
+/// A layer no lamp claimed is left with a zero range, which the pass reads as
+/// nothing to draw. Its map is still cleared, so a lamp that stopped casting
+/// cannot leave last frame's shadow behind.
+fn point_faces(lamps: &[crate::lighting::PointLight]) -> [GpuPointFace; POINT_SHADOW_LAYERS] {
+    let mut faces = [GpuPointFace::default(); POINT_SHADOW_LAYERS];
+
+    for (slot, index) in crate::lighting::casting_lamps(lamps).into_iter().enumerate() {
+        let lamp = &lamps[index];
+        let range = lamp.range.max(0.0);
+        for face in 0..6 {
+            faces[slot * 6 + face] = GpuPointFace {
+                view_projection: shadow::face_view_projection(lamp.position, face, range)
+                    .to_cols_array(),
+                position_range: lamp.position.extend(range).to_array(),
+            };
+        }
+    }
+
+    faces
+}
+
 /// The camera, the sun, the lamps and the spots, as the GPU sees them. Every field is
 /// padded out to four floats because that is how a uniform block is laid out.
 #[repr(C)]
@@ -981,6 +1172,9 @@ struct SceneUniform {
     /// spot shadow map hold anything.
     spot_light_count: [u32; 4],
     spot_lights: [GpuSpotLight; crate::lighting::MAX_SPOT_LIGHTS],
+    /// x is how many lamps cast, y and z are which of the lamps above those
+    /// are. w is padding. See spec 0022.
+    point_shadow: [u32; 4],
 }
 
 unsafe impl bytemuck::Pod for SceneUniform {}
@@ -1008,6 +1202,15 @@ impl SceneUniform {
             *slot = GpuSpotLight::new(spot);
         }
 
+        // the same rule the scene and the shadow passes use, so a lamp cannot be
+        // shadowed in one place and not the other
+        let casting = crate::lighting::casting_lamps(&lamps[..used]);
+        let mut point_shadow = [0u32; 4];
+        point_shadow[0] = casting.len() as u32;
+        for (slot, index) in casting.iter().enumerate() {
+            point_shadow[slot + 1] = *index as u32;
+        }
+
         Self {
             view_projection: camera.view_projection().to_cols_array(),
             camera_position: camera.position.extend(0.0).to_array(),
@@ -1020,6 +1223,7 @@ impl SceneUniform {
             point_lights,
             spot_light_count: [lit as u32, 0, 0, 0],
             spot_lights,
+            point_shadow,
         }
     }
 }
@@ -1060,6 +1264,63 @@ fn create_shadow_pipeline(
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: shadow::FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// A lamp's face. Like the sun's pass but with a fragment stage, because what
+/// goes in the map is distance from the lamp rather than the depth its
+/// projection happened to produce. See spec 0022.
+fn create_point_shadow_pipeline(
+    device: &wgpu::Device,
+    camera_bind_group_layout: &wgpu::BindGroupLayout,
+    which_layout: &wgpu::BindGroupLayout,
+    point_faces_layout: &wgpu::BindGroupLayout,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::include_wgsl!("../../res/shaders/shadow.wgsl"));
+
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Point Shadow Pipeline Layout"),
+        bind_group_layouts: &[
+            Some(camera_bind_group_layout),
+            Some(which_layout),
+            Some(point_faces_layout),
+        ],
+        immediate_size: 0,
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Point Shadow Pipeline"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_point"),
+            buffers: &[Some(crate::mesh::Vertex::DESC), Some(Instance::DESC)],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_point"),
+            // the depth buffer is the whole output; the fragment stage exists
+            // only to write a distance into it
+            targets: &[],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Front),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: shadow::POINT_FORMAT,
             depth_write_enabled: Some(true),
             depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
@@ -1257,7 +1518,7 @@ mod uniform_tests {
         // a uniform block wants each field on a 16 byte boundary
         assert_eq!(
             std::mem::size_of::<SceneUniform>(),
-            64 + 16 * 4 + 64 + 16 + 32 * MAX_POINT_LIGHTS + 16 + 128 * MAX_SPOT_LIGHTS
+            64 + 16 * 4 + 64 + 16 + 32 * MAX_POINT_LIGHTS + 16 + 128 * MAX_SPOT_LIGHTS + 16
         );
         assert_eq!(
             std::mem::offset_of!(SceneUniform, light_view_projection),
@@ -1271,8 +1532,9 @@ mod uniform_tests {
         assert_eq!(std::mem::offset_of!(SceneUniform, point_lights), 208);
         assert_eq!(std::mem::offset_of!(SceneUniform, spot_light_count), 464);
         assert_eq!(std::mem::offset_of!(SceneUniform, spot_lights), 480);
+        assert_eq!(std::mem::offset_of!(SceneUniform, point_shadow), 992);
 
-        for offset in [0, 64, 80, 96, 112, 128, 192, 208, 464, 480] {
+        for offset in [0, 64, 80, 96, 112, 128, 192, 208, 464, 480, 992] {
             assert_eq!(offset % 16, 0, "{} is not on sixteen bytes", offset);
         }
     }
@@ -1397,5 +1659,100 @@ mod uniform_tests {
             SceneUniform::new(&Camera::new(), &Light::new(), &[bad], &[], &shadow::default_bounds());
 
         assert_eq!(uniform.point_lights[0].position_range[3], 0.0);
+    }
+
+    #[test]
+    fn a_face_is_a_matrix_and_a_lamp_and_nothing_else() {
+        assert_eq!(std::mem::size_of::<GpuPointFace>(), 80);
+        assert_eq!(std::mem::offset_of!(GpuPointFace, view_projection), 0);
+        assert_eq!(std::mem::offset_of!(GpuPointFace, position_range), 64);
+        assert!(std::mem::align_of::<GpuPointFace>() <= 16);
+        assert_eq!(
+            std::mem::size_of::<[GpuPointFace; POINT_SHADOW_LAYERS]>(),
+            80 * POINT_SHADOW_LAYERS
+        );
+    }
+
+    #[test]
+    fn the_uniform_says_where_each_casting_lamp_starts() {
+        let lamps = [
+            PointLight::new(glam::Vec3::ZERO, glam::Vec3::ONE, 1.0, 5.0),
+            PointLight::new(glam::Vec3::X, glam::Vec3::ONE, 1.0, 5.0).casting(),
+            PointLight::new(glam::Vec3::Y, glam::Vec3::ONE, 1.0, 5.0),
+            PointLight::new(glam::Vec3::Z, glam::Vec3::ONE, 1.0, 5.0).casting(),
+        ];
+        let uniform =
+            SceneUniform::new(&Camera::new(), &Light::new(), &lamps, &[], &shadow::default_bounds());
+
+        assert_eq!(uniform.point_shadow[0], 2, "the count is wrong");
+        // the lamps that cast, by their place in the array the shader loops over
+        assert_eq!(uniform.point_shadow[1], 1);
+        assert_eq!(uniform.point_shadow[2], 3);
+
+        // and all four still light, per spec 0022
+        assert_eq!(uniform.point_light_count[0], 4);
+    }
+
+    #[test]
+    fn no_lamp_casting_is_a_count_of_none() {
+        let lamps = [PointLight::new(glam::Vec3::ZERO, glam::Vec3::ONE, 1.0, 5.0)];
+        let uniform =
+            SceneUniform::new(&Camera::new(), &Light::new(), &lamps, &[], &shadow::default_bounds());
+
+        assert_eq!(uniform.point_shadow, [0; 4]);
+    }
+
+    #[test]
+    fn a_casting_lamp_gets_six_layers_and_the_rest_get_none() {
+        let lamps = [
+            PointLight::new(glam::vec3(0.0, 3.0, 0.0), glam::Vec3::ONE, 1.0, 8.0).casting(),
+        ];
+        let faces = point_faces(&lamps);
+
+        for (layer, face) in faces.iter().take(6).enumerate() {
+            assert_eq!(
+                face.position_range,
+                [0.0, 3.0, 0.0, 8.0],
+                "layer {} is not the lamp's",
+                layer
+            );
+            // and the matrix is the one that face's pass will use
+            assert_eq!(
+                face.view_projection,
+                shadow::face_view_projection(glam::vec3(0.0, 3.0, 0.0), layer, 8.0)
+                    .to_cols_array()
+            );
+        }
+
+        // the second lamp's six belong to nobody, and a range of nothing is how
+        // the pass knows to draw nothing into them
+        for (layer, face) in faces.iter().enumerate().skip(6) {
+            assert_eq!(face.position_range[3], 0.0, "layer {} was claimed", layer);
+        }
+    }
+
+    #[test]
+    fn the_faces_and_the_uniform_agree_on_which_lamps_cast() {
+        // the shader finds a lamp's layers from its slot in the uniform's table,
+        // so the table and the order the passes fill the layers in have to be
+        // the same order
+        let lamps = [
+            PointLight::new(glam::Vec3::X * 2.0, glam::Vec3::ONE, 1.0, 4.0),
+            PointLight::new(glam::Vec3::Y * 2.0, glam::Vec3::ONE, 1.0, 4.0).casting(),
+            PointLight::new(glam::Vec3::Z * 2.0, glam::Vec3::ONE, 1.0, 4.0).casting(),
+        ];
+        let uniform =
+            SceneUniform::new(&Camera::new(), &Light::new(), &lamps, &[], &shadow::default_bounds());
+        let faces = point_faces(&lamps);
+
+        for slot in 0..uniform.point_shadow[0] as usize {
+            let lamp = uniform.point_lights[uniform.point_shadow[slot + 1] as usize];
+            assert_eq!(
+                faces[slot * 6].position_range,
+                lamp.position_range,
+                "slot {} points at a different lamp than its layers hold",
+                slot
+            );
+        }
     }
 }
