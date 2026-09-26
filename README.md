@@ -36,6 +36,16 @@ its body, casting a lattice shadow on the floor](https://raw.githubusercontent.c
 ![The same bottle in glass, the neck visible carrying on down inside the body
 after it passes through the wall](https://raw.githubusercontent.com/jvalol/blitzkit/main/media/klein-glass.png)
 
+`cargo run --release --example cubes` is the lighting: one sun, and two coloured
+lamps circling the floor with a ball drawn at each. Press L to switch between
+the sun and lamps, the sun alone, and the lamps alone. That switch is the only
+way to see the sun, which has a direction but no position and so nothing to
+draw.
+
+`cargo run --release --example rolling` is the collision: a ball rolled around a
+walled room with WASD, sliding along walls and settling into corners rather than
+passing through them. Drag to swing the camera round it.
+
 ```
 cargo run --release --example tunnel
 ```
