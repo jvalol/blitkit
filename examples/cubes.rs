@@ -11,6 +11,7 @@
 
 use blitzkit::camera::Camera;
 use blitzkit::geometry::Geometry;
+use blitzkit::lighting::PointLight;
 use blitzkit::keyboard::{KeyboardInput, KeyboardKey, KeyboardKeyState};
 use blitzkit::mesh::{MeshData, Transform};
 use blitzkit::mouse::{MouseButton, MouseInput};
@@ -24,9 +25,48 @@ use glam::{vec3, vec4, Quat, Vec3};
 
 const CHECKER: &[u8] = include_bytes!("../res/textures/checker.png");
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum Lights {
+    Both,
+    SunOnly,
+    LampsOnly,
+}
+
+impl Lights {
+    fn next(self) -> Self {
+        match self {
+            Self::Both => Self::SunOnly,
+            Self::SunOnly => Self::LampsOnly,
+            Self::LampsOnly => Self::Both,
+        }
+    }
+
+    fn sun(self) -> bool {
+        self != Self::LampsOnly
+    }
+
+    fn lamps(self) -> bool {
+        self != Self::SunOnly
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Both => "sun and lamps",
+            Self::SunOnly => "the sun alone, so every shadow is its",
+            Self::LampsOnly => "the lamps alone, and nothing casts a shadow",
+        }
+    }
+}
+
 struct Cubes {
     cube: Option<MeshId>,
     floor: Option<MeshId>,
+    /// A ball drawn at each lamp, so the light has somewhere to come from.
+    bulb: Option<MeshId>,
+    /// Which lights are on: both, the sun alone, or the lamps alone. A sun has
+    /// no position and nothing to draw, so the only way to point at it is to
+    /// take it away and let you see what stopped.
+    lights: Lights,
     checker: Option<TextureId>,
     /// Seconds since the example started, which drives the spin and the orbit.
     time: f32,
@@ -49,6 +89,8 @@ impl Cubes {
         Self {
             cube: None,
             floor: None,
+            bulb: None,
+            lights: Lights::Both,
             checker: None,
             time: 0.0,
             angle: 0.0,
@@ -70,6 +112,7 @@ impl Game for Cubes {
     fn load(&mut self, renderer: &mut Renderer) {
         self.cube = Some(renderer.add_mesh(&MeshData::cube()));
         self.floor = Some(renderer.add_mesh(&MeshData::plane()));
+        self.bulb = Some(renderer.add_mesh(&MeshData::sphere(16, 10)));
         self.checker = TextureData::from_bytes(CHECKER)
             .map(|data| renderer.add_texture(&data))
             .ok();
@@ -102,13 +145,43 @@ impl Game for Cubes {
         text_renderer.reset();
         text_renderer.push_render_text(RenderText {
             position: glam::vec2(20.0, 20.0),
-            text: String::from("arrows or drag to move, scroll to zoom, space locks the cursor"),
+            text: String::from(
+                "arrows or drag to move, scroll to zoom, space locks the cursor, l switches lights",
+            ),
             size: 14.0,
             ..Default::default()
         });
         text_renderer.push_render_text(RenderText {
             position: glam::vec2(20.0, 44.0),
             text: format!("cursor {:.0}, {:.0}", self.cursor.x, self.cursor.y),
+            size: 14.0,
+            ..Default::default()
+        });
+
+        // the sun has no position and nothing on screen to see, so the only
+        // way to know it is there is the shadows and this line
+        let sun = blitzkit::lighting::Light::new().direction;
+        text_renderer.push_render_text(RenderText {
+            position: glam::vec2(20.0, 68.0),
+            color: vec4(1.0, 0.85, 0.5, 1.0),
+            text: format!("lit by {}", self.lights.label()),
+            size: 14.0,
+            ..Default::default()
+        });
+        text_renderer.push_render_text(RenderText {
+            position: glam::vec2(20.0, 88.0),
+            color: vec4(0.7, 0.7, 0.75, 1.0),
+            text: format!(
+                "the sun has no place to draw, only a direction: {:.1}, {:.1}, {:.1}",
+                sun.x, sun.y, sun.z
+            ),
+            size: 14.0,
+            ..Default::default()
+        });
+        text_renderer.push_render_text(RenderText {
+            position: glam::vec2(20.0, 108.0),
+            color: vec4(0.7, 0.7, 0.75, 1.0),
+            text: String::from("the lamps are the two balls, reaching 6 units and casting nothing"),
             size: 14.0,
             ..Default::default()
         });
@@ -119,6 +192,14 @@ impl Game for Cubes {
             (Some(cube), Some(floor)) => (cube, floor),
             _ => return,
         };
+
+        // turning the sun off leaves a little fill, so the shapes are still
+        // there to look at and what vanished is plainly the sun's doing
+        scene.light = blitzkit::lighting::Light::new();
+        if !self.lights.sun() {
+            scene.light.intensity = 0.0;
+            scene.light.ambient = Vec3::splat(0.03);
+        }
 
         // a wide floor, textured if the image loaded
         let floor_transform = Transform::at(vec3(0.0, -0.5, 0.0)).with_scale(Vec3::splat(20.0));
@@ -156,6 +237,41 @@ impl Game for Cubes {
             vec4(0.9, 0.8, 0.2, 1.0),
         );
 
+        // two lamps low over the floor, per spec 0020, each with a ball drawn
+        // where it is. A light with nothing to see at its source leaves you
+        // working backwards from the pool it casts, which is no way to read a
+        // scene: the sun already does that, and one invisible light is enough.
+        //
+        // Their reach ends well short of the far corners on purpose. A floor
+        // lit all over would say nothing about falloff.
+        // different rates, so the two drift together every twelve seconds or so
+        // and you can see what two lights do where they overlap
+        let red = self.time * 0.9;
+        let blue = self.time * 0.38 + std::f32::consts::PI;
+        let lamps = [
+            (vec3(red.cos() * 3.0, 0.9, red.sin() * 3.0), vec3(1.0, 0.35, 0.2)),
+            (vec3(blue.cos() * 3.0, 0.9, blue.sin() * 3.0), vec3(0.2, 0.5, 1.0)),
+        ];
+
+        for (at, color) in lamps {
+            if !self.lights.lamps() {
+                continue;
+            }
+            scene.push_light(PointLight::new(at, color, 2.5, 6.0));
+
+            // past full brightness, so the ball reads as the thing emitting
+            // rather than a small painted sphere. The engine has no emissive
+            // material, and this is the nearest honest thing to one.
+            if let Some(bulb) = self.bulb {
+                scene.push_material(
+                    bulb,
+                    &Transform::at(at).with_scale(Vec3::splat(0.35)),
+                    (color * 3.0).extend(1.0),
+                    8.0,
+                );
+            }
+        }
+
         // a shinier cube than the rest, to make the highlight obvious
         scene.push_material(
             cube,
@@ -182,6 +298,7 @@ impl Game for Cubes {
             KeyboardKey::Right => self.turning = if held { 1.5 } else { 0.0 },
             KeyboardKey::Up => self.rising = if held { 2.0 } else { 0.0 },
             KeyboardKey::Down => self.rising = if held { -2.0 } else { 0.0 },
+            KeyboardKey::L if held => self.lights = self.lights.next(),
             KeyboardKey::Escape => self.quitting = held,
             // applied next frame, when the renderer is reachable
             KeyboardKey::Space if held => {
