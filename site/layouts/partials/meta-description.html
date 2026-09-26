@@ -1,0 +1,3 @@
+{{/* The page's own description, falling back to the site's. jva.lol's version
+     of this partial does more and is tied to its post front matter. */ -}}
+{{ with .Description }}{{ . }}{{ else }}{{ .Site.Params.description }}{{ end }}

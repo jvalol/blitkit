@@ -1,0 +1,27 @@
+<nav>
+{{ partial "docs/brand" . }}
+{{ partial "docs/search" . }}
+
+{{ partial "docs/inject/menu-before" . }}
+{{ partial "docs/menu-hugo" (dict "menu" .Site.Menus.before "page" .) }}
+
+{{ if .Site.Params.BookMenuBundle }}
+  {{ partial "docs/menu-bundle" . }}
+{{ else }}
+  {{ partial "docs/menu-filetree" . }}
+{{ end }}
+
+{{/* The standing entry is the puzzle's lure ("I hid something on this
+   site"), so it has no business on the door: whoever is reading /embers
+   has already found it and walked the whole trail. */}}
+{{ if not .Params.door }}
+  {{ partial "docs/menu-hugo" (dict "menu" .Site.Menus.after "page" .) }}
+{{ end }}
+{{ partial "docs/inject/menu-after" . }}
+</nav>
+
+<!-- Restore menu position as soon as possible to avoid flickering -->
+{{ $script := resources.Get "menu-reset.js" | resources.Minify }}
+{{ with $script.Content }}
+  <script>{{ . | safeJS }}</script>
+{{ end }}

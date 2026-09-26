@@ -1,0 +1,29 @@
+{{ define "main" }}
+{{/* Tag pages wear the term as written, hashed, so the heading matches
+   the chip that brought the reader here — Hugo's title-caser would say
+   "Gpg" and "Popsicleboat". Category pages keep .Title, where the same
+   title-caser is useful: it normalises a lowercase "programming" to sit
+   beside Personal and Projects. */}}
+<h1>{{ if eq .Data.Plural "tags" }}#{{ .Data.Term }}{{ else }}{{ .Title }}{{ end }}</h1>
+{{ partial "fire-tell-top.html" . }}
+{{ range sort .Paginator.Pages }}
+<article class="markdown book-post">
+  <h2>
+    <a href="{{ .RelPermalink }}">{{ partial "docs/title.html" . }}</a>
+  </h2>
+  {{ partial "docs/post-meta" . }}
+  <p>
+    {{- .Summary -}}
+    {{ if .Truncated }}
+      <a href="{{ .RelPermalink }}">...</a>
+    {{ end }}
+  </p>
+</article>
+{{ end }}
+
+{{ template "_internal/pagination.html" . }}
+{{ end }}
+
+{{ define "toc" }}
+  {{ partial "docs/taxonomy" . }}
+{{ end }}

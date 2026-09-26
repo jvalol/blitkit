@@ -1,0 +1,9 @@
+{{/* Open Graph and Twitter tags. Minimal on purpose: jva.lol's version carries
+     a cascade this site has no use for. */ -}}
+<meta property="og:site_name" content="{{ .Site.Title }}">
+<meta property="og:title" content="{{ .Title | default .Site.Title }}">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{ .Permalink }}">
+<meta property="og:description" content="{{ partial "meta-description.html" . }}">
+<meta name="twitter:card" content="summary_large_image">
+{{- partial "social-image.html" . }}

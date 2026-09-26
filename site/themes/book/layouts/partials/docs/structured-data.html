@@ -1,0 +1,29 @@
+{{- if .IsHome -}}
+  {{- $schema := dict
+    "@context" "https://schema.org"
+    "@type" "Person"
+    "name" "Jake Van Alstyne"
+    "url" .Site.BaseURL
+    "image" ("/me.jpg" | absURL)
+    "jobTitle" "Software Developer"
+    "sameAs" (slice "https://popsicleboat.com" "https://mastodon.social/@jvalol")
+  -}}
+  <script type="application/ld+json">{{ $schema | jsonify | safeJS }}</script>
+{{- else if and .IsPage (not .Params.bookhidden) -}}
+  {{- /* The same image the og:/twitter: tags advertise — bundle photo,
+       generated title card, or me.jpg — so search rich results and
+       social unfurls can never disagree. */ -}}
+  {{- $img := partial "social-image.html" . -}}
+  {{- $schema := dict
+    "@context" "https://schema.org"
+    "@type" "BlogPosting"
+    "headline" .Title
+    "url" .Permalink
+    "datePublished" (.Date.Format "2006-01-02")
+    "dateModified" (.Lastmod.Format "2006-01-02")
+    "description" (or .Description .Summary | plainify | htmlUnescape)
+    "image" $img
+    "author" (dict "@type" "Person" "name" "Jake Van Alstyne" "url" .Site.BaseURL)
+  -}}
+  <script type="application/ld+json">{{ $schema | jsonify | safeJS }}</script>
+{{- end -}}

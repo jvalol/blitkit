@@ -1,0 +1,25 @@
+{{ range $taxonomy, $_ := .Site.Taxonomies }}
+  {{ with $terms := $.GetTerms $taxonomy }}
+  <div>
+    {{ range $n, $term := $terms }}{{ if $n }}, {{ end }}
+      <a href="{{ $term.RelPermalink }}">{{ $term.Title }}</a>
+    {{- end }}
+  </div>
+  {{ end }}
+{{ end }}
+
+{{ with .Date }}
+  {{/* A date is metadata, not a section heading — <time> keeps the document
+     outline honest while .post-date keeps the old h5 look exactly. */}}
+  <p class="post-date"><time datetime="{{ .Format "2006-01-02" }}">{{ partial "docs/date" (dict "Date" . "Format" $.Site.Params.BookDateFormat) }}</time></p>
+{{ end }}
+
+{{ if .Params.image }}
+<p>
+  {{ with .Resources.GetMatch .Params.image }}
+    <img src={{ .RelPermalink }} />
+  {{ else }}
+    <img src={{ .Params.image | relURL }} />
+  {{ end }}
+</p>
+{{ end }}

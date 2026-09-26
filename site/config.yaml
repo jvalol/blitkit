@@ -1,0 +1,26 @@
+baseURL: https://blitzkit.jva.lol/
+languageCode: en-us
+title: blitzkit
+theme: book
+
+# The screenshots are copied into static/media by scripts/build, so they are
+# generated output rather than sources kept here.
+ignoreFiles:
+  - static/media/.*
+
+markup:
+  goldmark:
+    renderer:
+      # Matches jva.lol: raw HTML in markdown stays off, so a page cannot
+      # quietly grow markup no template accounts for.
+      unsafe: false
+  highlight:
+    noClasses: false
+
+params:
+  description: A small 2D and 3D game engine in Rust, over wgpu.
+  BookTheme: dark
+  BookToC: true
+  BookSection: docs
+  BookRepo: https://github.com/jvalol/blitzkit
+  BookEditPath: edit/main/site/content

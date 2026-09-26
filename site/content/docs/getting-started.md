@@ -1,0 +1,59 @@
+---
+title: Getting started
+weight: 1
+---
+
+# Getting started
+
+## Add it
+
+```
+cargo add blitzkit
+```
+
+It needs Rust 1.87 or newer, which is wgpu's minimum.
+
+## The whole interface
+
+A game implements `Game` and calls `start()`. The engine owns the window and
+the event loop and hands the game what happened.
+
+```rust
+use blitzkit::{start, Game};
+use blitzkit::geometry::Geometry;
+use blitzkit::renderer::render_text::TextRenderer;
+use blitzkit::renderer::scene::Scene;
+use blitzkit::renderer::Renderer;
+use blitzkit::camera::Camera;
+use blitzkit::sound::SoundSystem;
+
+struct Hello;
+
+impl Game for Hello {
+    fn initialize(&mut self, _renderer: &mut Renderer, _sound: &mut SoundSystem, _size: (f32, f32)) {}
+
+    fn update(&mut self, _delta: f32) {}
+
+    fn draw(&mut self, _scene: &mut Scene, _camera: &mut Camera) {}
+}
+
+fn main() {
+    start("hello", 960.0, 540.0, Hello);
+}
+```
+
+## What arrives
+
+Input reaches the game as `KeyboardInput` and `MouseInput`, never as winit
+types. Anything uploaded to the GPU comes back as a handle, `MeshId` or
+`TextureId`, never as a buffer. The maths in the public API is glam's: `Vec2`,
+`Vec3`, `Mat4`, `Quat`.
+
+A missing device disables a feature rather than panicking. Sound works that way
+already: with no audio device the engine runs silent.
+
+## The API
+
+Every type and function is on
+[docs.rs](https://docs.rs/blitzkit), generated from the source, so it cannot
+drift from what is published. This site does not restate signatures.

@@ -1,0 +1,31 @@
+<!--
+  This is template for hugo menus, accepts (dict "menu" MenuEntity "page" Page)
+  https://gohugo.io/variables/menus/
+  The page is threaded through so entries that resolve to a page can
+  carry the .active class, same as the filetree's links.
+-->
+{{ if .menu }}
+  {{ template "book-menu-hugo" (dict "menu" .menu "page" .page) }}
+{{ end }}
+
+{{ define "book-menu-hugo" }}
+{{ $page := .page }}
+<ul>
+  {{ range .menu }}
+  <li>
+    <a href="{{ .URL }}" {{ if not .Page }}target="_blank" rel="noopener"{{ end }} class="{{ if and .Page (eq .Page $page) }}active{{ end }}">
+      {{- .Pre -}}
+      {{ with .Page }}
+        {{ partial "docs/title" .Page }}
+      {{ else }}
+        {{ .Name }}
+      {{ end }}
+      {{- .Post -}}
+    </a>
+    {{- with .Children }}
+      {{ template "book-menu-hugo" (dict "menu" . "page" $page) }}
+    {{- end }}
+  </li>
+  {{ end }}
+</ul>
+{{ end }}

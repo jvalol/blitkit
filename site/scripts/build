@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# What Netlify runs, and what to run locally to reproduce it.
+#
+# Kept as a script rather than a one-liner in netlify.toml so the steps have
+# somewhere to be explained and so `site/scripts/build` is the same command
+# everywhere.
+set -euo pipefail
+cd "$(dirname "$0")/.." || exit 1
+
+# No site copy ships while it still carries the proposed-copy marker.
+(cd .. && ./scripts/ship-check)
+
+# media/ is at the repo root, shared with both readmes. Hugo can only serve
+# what is under site/, so take a copy at build time instead of keeping two.
+mkdir -p static/media
+cp ../media/*.png static/media/
+
+hugo --gc --minify

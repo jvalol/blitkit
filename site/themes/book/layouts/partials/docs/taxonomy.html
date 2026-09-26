@@ -1,0 +1,21 @@
+<nav>
+  <ul>
+  {{ range $term, $_ := .Site.Taxonomies }}
+    {{ with $.Site.GetPage (printf "/%s" $term | urlize) }}
+    <li class="book-section-flat">
+      <strong>{{ .Title | title }}</strong>
+      <ul>
+      {{ range .Pages }}
+        <li class="flex justify-between">
+          {{/* Tags as written and hashed, categories title-cased — the
+             same rule the headings and the post meta use. */}}
+          <a href="{{ .RelPermalink }}">{{ if eq $term "tags" }}#{{ .Data.Term }}{{ else }}{{ .Title }}{{ end }}</a>
+          <span>{{ len .Pages }}</span>
+        </li>
+      {{ end }}
+      </ul>
+    </li>
+    {{ end }}
+  {{ end }}
+  </ul>
+</nav>

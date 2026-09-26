@@ -1,0 +1,18 @@
+{{ define "main" }}
+<article class="markdown">
+  <h1>{{ .Title | title }}</h1>
+  {{ partial "fire-tell-top.html" . }}
+  {{/* Same rule as the term pages: tags as written and hashed, categories
+     title-cased. Read the case off the term page rather than the
+     listing — .Term here is the normalised key, so BTC arrives as
+     "btc". */}}
+  {{ $plural := .Data.Plural }}
+  {{ range .Data.Terms.Alphabetical }}
+    <div><a href="{{ .Page.RelPermalink }}">{{ if eq $plural "tags" }}#{{ .Page.Data.Term }}{{ else }}{{ .Page.Title }}{{ end }} <sup>{{ .Count }}</sup></a></div>
+  {{ end }}
+</article>
+{{ end }}
+
+{{ define "toc" }}
+  {{ partial "docs/taxonomy" . }}
+{{ end }}

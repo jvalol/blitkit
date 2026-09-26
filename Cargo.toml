@@ -13,7 +13,10 @@ categories = ["game-engines", "graphics"]
 # the old name's final release lives here; it is not part of this crate.
 # media is the readme's screenshots, which it links to by absolute url so they
 # render on crates.io too, so shipping half a megabyte of them would be waste.
-exclude = ["farewell", "media"]
+# site is the product site at blitzkit.jva.lol, a Hugo project with a vendored
+# theme: 225 files and most of ten megabytes that nobody depending on this
+# crate has any use for.
+exclude = ["farewell", "media", "site"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

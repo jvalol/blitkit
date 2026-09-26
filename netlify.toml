@@ -1,0 +1,22 @@
+# The product site at blitzkit.jva.lol, per spec 0038 on jva.lol.
+#
+# This file overrides whatever the Netlify dashboard holds, so the deploy is
+# reproducible from a clone and the UI cannot drift away from the repo. Same
+# reason jva.lol's netlify.toml says so at the top of itself.
+#
+# ship-check runs first. Any site copy still marked "[COPY - Jake]" is prose
+# that was proposed and is not yet Jake's, and it fails the build before
+# anything reaches the web.
+#
+# The screenshots are copied in rather than duplicated. They live in media/ at
+# the repo root because both readmes link them there by absolute URL, and the
+# crate excludes that directory from what it publishes. Netlify builds from
+# site/, which cannot see a sibling directory, so the build brings them along.
+[build]
+  base = "site"
+  publish = "site/public"
+  command = "./scripts/build"
+
+[build.environment]
+  # Keep aligned with the Hugo that jva.lol pins and that is installed locally.
+  HUGO_VERSION = "0.166.0"

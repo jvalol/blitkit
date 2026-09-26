@@ -1,0 +1,21 @@
+{{ if .Params.ai_drafted }}
+  {{/* The disclosure, per Jake's policy of 2026-08-15. The trigger is
+     SURVIVING DRAFT WORDING, not "AI touched this at some point", so it goes
+     on a page only while the draft's phrasing is still doing the work.
+
+     jva.lol learned the finer half of this and wrote it down: it carried a
+     lighter `ai_audited` tier for prose Jake wrote and AI only edited, and
+     retired it on 2026-08-25 because prose he authored never owed a
+     disclosure however much editing it took. The line was loudest exactly
+     where it mattered least.
+
+     What that leaves off this site on purpose: the reference pages. A list of
+     commands read out of an example's own source, the controls it binds, and
+     alt text on a screenshot are not prose with an author. Disclosing them
+     would spend the line's credibility on pages that have no voice to
+     disclose, which is how a standing notice turns into furniture nobody
+     reads.
+
+     Jake's wording, verbatim. Do not adapt it here. */}}
+  <p class="ai-disclosure">I asked AI to draft this for me. I've edited it. Any surviving AI smells are my oversight.</p>
+{{ end }}

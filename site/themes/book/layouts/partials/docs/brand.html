@@ -1,0 +1,12 @@
+<h2 class="book-brand">
+  <a href="{{ .Site.BaseURL | relLangURL }}">
+    {{- with .Site.Params.BookLogo -}}
+    {{- if strings.HasSuffix . ".mp4" -}}
+    <video autoplay loop muted playsinline src="{{ . | relURL }}" aria-hidden="true"></video>
+    {{- else -}}
+    <img src="{{ . | relURL }}" alt="Logo" />
+    {{- end -}}
+    {{- end -}}
+    <span>{{ .Site.Title }}</span>
+  </a>
+</h2>
