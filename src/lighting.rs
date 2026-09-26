@@ -139,9 +139,245 @@ impl PointLight {
     }
 }
 
+/// How many spots fit. Far fewer than lamps, because each one costs a whole
+/// pass over the scene to fill its shadow map. See spec 0021.
+pub const MAX_SPOT_LIGHTS: usize = 4;
+
+/// A lamp with a direction: a cone, which is the cheapest light that can be
+/// moved and still cast a shadow. One direction is one projection is one depth
+/// map, which is the machinery spec 0015 already built for the sun.
+#[derive(Debug, Copy, Clone)]
+pub struct SpotLight {
+    pub position: Vec3,
+    /// The way the cone points. Need not be normalized.
+    pub direction: Vec3,
+    pub color: Vec3,
+    pub intensity: f32,
+    pub range: f32,
+    /// Filled to the brim inside this angle from the middle, in radians.
+    pub inner: f32,
+    /// Nothing at all outside this one.
+    pub outer: f32,
+}
+
+impl SpotLight {
+    pub fn new(
+        position: Vec3,
+        direction: Vec3,
+        color: Vec3,
+        intensity: f32,
+        range: f32,
+        inner: f32,
+        outer: f32,
+    ) -> Self {
+        Self {
+            position,
+            direction,
+            color,
+            intensity,
+            range,
+            inner,
+            outer,
+        }
+    }
+
+    /// The cosines the shader compares against, outer first. Kept together
+    /// because the order matters and getting it backwards turns the cone inside
+    /// out: a wider angle has the smaller cosine.
+    ///
+    /// An inner angle wider than the outer is not an error, it is just a spot
+    /// with no soft edge, so the two are put back in order rather than refused.
+    pub fn cone_cosines(&self) -> (f32, f32) {
+        let outer = self.outer.cos();
+        let inner = self.inner.cos();
+
+        if inner < outer {
+            (inner, outer)
+        } else {
+            (outer, inner)
+        }
+    }
+
+    /// How much of the cone reaches a point, from its angle alone. One down the
+    /// middle, nothing past the outer angle, and smooth between: a hard circle
+    /// of light on a floor is what gives a cheap spot away.
+    ///
+    /// Matches `spot_cone` in `mesh.wgsl`. Keep the two in step.
+    pub fn cone(&self, toward_surface: Vec3) -> f32 {
+        let facing = self.direction.normalize_or_zero();
+        let toward = toward_surface.normalize_or_zero();
+        if facing == Vec3::ZERO || toward == Vec3::ZERO {
+            return 0.0;
+        }
+
+        let (cos_outer, cos_inner) = self.cone_cosines();
+        let cosine = facing.dot(toward);
+        let width = cos_inner - cos_outer;
+        if width <= 0.0 {
+            // no soft edge to speak of, so it is in or it is out
+            return if cosine >= cos_inner { 1.0 } else { 0.0 };
+        }
+
+        let along = ((cosine - cos_outer) / width).clamp(0.0, 1.0);
+
+        // smooth at both ends rather than a straight ramp, so the edge does not
+        // show a line where the falloff starts
+        along * along * (3.0 - 2.0 * along)
+    }
+
+    /// The same distance falloff a lamp uses, per spec 0020. A spot is a lamp
+    /// with a direction, not a different kind of thing.
+    pub fn falloff(&self, distance: f32) -> f32 {
+        PointLight::new(self.position, self.color, self.intensity, self.range).falloff(distance)
+    }
+
+    /// What this spot adds at a point on a surface.
+    ///
+    /// Matches the loop in `mesh.wgsl`. Keep the two in step.
+    pub fn shade(
+        &self,
+        at: Vec3,
+        normal: Vec3,
+        to_viewer: Vec3,
+        base: Vec3,
+        shininess: f32,
+    ) -> Vec3 {
+        let offset = self.position - at;
+        let distance = offset.length();
+        let faded = self.falloff(distance) * self.cone(-offset);
+        if faded <= 0.0 {
+            return Vec3::ZERO;
+        }
+
+        let to_light = offset.normalize_or_zero();
+        let normal = normal.normalize_or_zero();
+        let lambert = normal.dot(to_light).max(0.0);
+        if lambert <= 0.0 {
+            return Vec3::ZERO;
+        }
+
+        let light = self.color * self.intensity * faded;
+        let half = (to_light + to_viewer.normalize_or_zero()).normalize_or_zero();
+        let specular = light * normal.dot(half).max(0.0).powf(shininess.max(1.0));
+
+        base * light * lambert + specular
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A spot two units up, pointing straight down, a 20 degree core inside a
+    /// 35 degree cone.
+    fn spot() -> SpotLight {
+        SpotLight::new(
+            Vec3::Y * 2.0,
+            -Vec3::Y,
+            Vec3::ONE,
+            1.0,
+            6.0,
+            20f32.to_radians(),
+            35f32.to_radians(),
+        )
+    }
+
+    #[test]
+    fn a_spot_is_full_strength_down_its_middle() {
+        // straight down the axis, and anywhere inside the inner angle
+        assert!((spot().cone(-Vec3::Y) - 1.0).abs() < 1e-6);
+
+        let just_inside = glam::vec3(15f32.to_radians().tan(), -1.0, 0.0);
+        assert!((spot().cone(just_inside) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_spot_stops_at_its_outer_angle() {
+        let past = glam::vec3(40f32.to_radians().tan(), -1.0, 0.0);
+        assert_eq!(spot().cone(past), 0.0);
+
+        // and straight out the back is nothing, not a second cone
+        assert_eq!(spot().cone(Vec3::Y), 0.0);
+    }
+
+    #[test]
+    fn a_spot_edge_is_soft() {
+        let spot = spot();
+        let at = |degrees: f32| {
+            spot.cone(glam::vec3(degrees.to_radians().tan(), -1.0, 0.0))
+        };
+
+        let mut last = 1.0;
+        for step in 0..=30 {
+            let degrees = 20.0 + step as f32 * 0.5;
+            let now = at(degrees);
+
+            assert!(now <= last + 1e-6, "it brightened at {:.1} degrees", degrees);
+            assert!((0.0..=1.0).contains(&now));
+            last = now;
+        }
+
+        // partway across the soft edge it is neither on nor off, which is the
+        // whole point of having one
+        let middle = at(27.5);
+        assert!((0.05..0.95).contains(&middle), "the edge is a step, at {}", middle);
+    }
+
+    #[test]
+    fn a_spot_with_its_angles_backwards_still_behaves() {
+        let mut backwards = spot();
+        std::mem::swap(&mut backwards.inner, &mut backwards.outer);
+
+        // the wider of the two is still the outer one, so the cone does not
+        // turn inside out
+        assert!((backwards.cone(-Vec3::Y) - 1.0).abs() < 1e-6);
+        assert_eq!(
+            backwards.cone(glam::vec3(40f32.to_radians().tan(), -1.0, 0.0)),
+            0.0
+        );
+
+        let (cos_outer, cos_inner) = backwards.cone_cosines();
+        assert!(cos_outer <= cos_inner, "a wider angle has the smaller cosine");
+    }
+
+    #[test]
+    fn a_spot_fades_with_distance_like_a_lamp() {
+        let spot = spot();
+        let lamp = PointLight::new(spot.position, spot.color, spot.intensity, spot.range);
+
+        for step in 0..=10 {
+            let distance = spot.range * step as f32 / 10.0;
+            assert!((spot.falloff(distance) - lamp.falloff(distance)).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn a_spot_does_not_light_the_back_of_a_surface() {
+        let away = spot().shade(Vec3::ZERO, -Vec3::Y, -Vec3::Y, WHITE, 32.0);
+        assert_eq!(away, Vec3::ZERO);
+
+        let toward = spot().shade(Vec3::ZERO, Vec3::Y, Vec3::Y, WHITE, 32.0);
+        assert!(toward.length() > 0.0, "the floor under it was dark");
+    }
+
+    #[test]
+    fn a_spot_carries_its_color() {
+        let mut green = spot();
+        green.color = Vec3::new(0.0, 1.0, 0.0);
+        let lit = green.shade(Vec3::ZERO, Vec3::Y, Vec3::Y, WHITE, 32.0);
+
+        assert!(lit.y > 0.0);
+        assert!(lit.x.abs() < 1e-6 && lit.z.abs() < 1e-6, "green turned up {:?}", lit);
+    }
+
+    #[test]
+    fn a_spot_aimed_nowhere_lights_nothing() {
+        let mut broken = spot();
+        broken.direction = Vec3::ZERO;
+
+        assert_eq!(broken.cone(-Vec3::Y), 0.0);
+        assert_eq!(broken.shade(Vec3::ZERO, Vec3::Y, Vec3::Y, WHITE, 32.0), Vec3::ZERO);
+    }
 
     const WHITE: Vec3 = Vec3::ONE;
 

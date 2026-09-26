@@ -28,6 +28,7 @@ not a priority, and it never changes once a spec exists.
 | [0018](0018-translucency.md) | Seeing through a thing, by the alpha of its color |
 | [0019](0019-listener.md) | Ears that can be put somewhere and pointed |
 | [0020](0020-point-lights.md) | Lamps with a place, a reach, and no shadow |
+| [0021](0021-spot-lights.md) | Cones that cast, one shadow map each |
 
 `cargo run --example cubes` draws what specs 0007 through 0012 built: lit,
 textured, depth sorted, instanced geometry with a camera that moves.

@@ -4,7 +4,7 @@
 //! thing it wants drawn, the same shape as `Geometry::push_quad`, and the
 //! renderer batches everything sharing a mesh into one instanced draw.
 
-use crate::lighting::{Light, PointLight, MAX_POINT_LIGHTS};
+use crate::lighting::{Light, PointLight, SpotLight, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS};
 use crate::mesh::Transform;
 use glam::Vec4;
 use std::collections::HashMap;
@@ -99,6 +99,9 @@ pub struct Scene {
     pub light: Light,
     /// The lamps, refilled each frame like the instances. See spec 0020.
     point_lights: Vec<PointLight>,
+    /// The spots, likewise. Far fewer, because each one costs a pass over the
+    /// scene to fill its shadow map. See spec 0021.
+    spot_lights: Vec<SpotLight>,
 }
 
 impl Scene {
@@ -112,6 +115,7 @@ impl Scene {
             instances.clear();
         }
         self.point_lights.clear();
+        self.spot_lights.clear();
     }
 
     /// Adds a lamp for this frame, per spec 0020.
@@ -132,6 +136,26 @@ impl Scene {
 
     pub fn point_lights(&self) -> &[PointLight] {
         &self.point_lights
+    }
+
+    /// Adds a spot for this frame, per spec 0021.
+    ///
+    /// Past [`MAX_SPOT_LIGHTS`] the extra ones are dropped and said so. The cap
+    /// is low because every spot is another pass over the whole scene.
+    pub fn push_spot(&mut self, light: SpotLight) {
+        if self.spot_lights.len() >= MAX_SPOT_LIGHTS {
+            log::warn!(
+                "a scene pushed more than {} spot lights; the rest are dropped",
+                MAX_SPOT_LIGHTS
+            );
+            return;
+        }
+
+        self.spot_lights.push(light);
+    }
+
+    pub fn spot_lights(&self) -> &[SpotLight] {
+        &self.spot_lights
     }
 
     /// Draws `mesh` at `transform`, in white.
@@ -193,6 +217,50 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spot(at: f32) -> SpotLight {
+        SpotLight::new(
+            glam::Vec3::splat(at),
+            -glam::Vec3::Y,
+            glam::Vec3::ONE,
+            1.0,
+            8.0,
+            0.3,
+            0.6,
+        )
+    }
+
+    #[test]
+    fn spot_lights_are_cleared_with_the_scene() {
+        let mut scene = Scene::new();
+        scene.push_spot(spot(1.0));
+        assert_eq!(scene.spot_lights().len(), 1);
+
+        scene.reset();
+
+        assert!(scene.spot_lights().is_empty(), "a spot outlived its frame");
+    }
+
+    #[test]
+    fn only_the_first_four_spots_are_kept() {
+        let mut scene = Scene::new();
+        for index in 0..MAX_SPOT_LIGHTS + 3 {
+            scene.push_spot(spot(index as f32));
+        }
+
+        assert_eq!(scene.spot_lights().len(), MAX_SPOT_LIGHTS);
+        assert_eq!(scene.spot_lights()[0].position.x, 0.0);
+    }
+
+    #[test]
+    fn lamps_and_spots_are_counted_apart() {
+        let mut scene = Scene::new();
+        scene.push_light(lamp(1.0));
+        scene.push_spot(spot(2.0));
+
+        assert_eq!(scene.point_lights().len(), 1);
+        assert_eq!(scene.spot_lights().len(), 1);
+    }
 
     fn lamp(at: f32) -> PointLight {
         PointLight::new(glam::Vec3::splat(at), glam::Vec3::ONE, 1.0, 5.0)

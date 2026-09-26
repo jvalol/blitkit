@@ -1,5 +1,7 @@
-// How many lamps fit. Matches lighting::MAX_POINT_LIGHTS. Keep the two in step.
+// How many lamps and spots fit. Matches lighting::MAX_POINT_LIGHTS and
+// MAX_SPOT_LIGHTS. Keep the three in step.
 const MAX_POINT_LIGHTS: u32 = 8u;
+const MAX_SPOT_LIGHTS: u32 = 4u;
 
 // One lamp: two vec4s exactly, because a uniform block aligns every array
 // element to sixteen bytes. Matches GpuPointLight in renderer/mod.rs.
@@ -10,7 +12,21 @@ struct PointLight {
     color_intensity: vec4<f32>,
 };
 
-// The camera, the sun and the lamps, written once per frame.
+// One spot: three vec4s of parameters and the matrix onto its shadow layer.
+// Matches GpuSpotLight in renderer/mod.rs.
+struct SpotLight {
+    // xyz is where it is, w is how far it reaches
+    position_range: vec4<f32>,
+    // xyz is the way it points, w is the cosine of the outer angle
+    direction_cos_outer: vec4<f32>,
+    // rgb is the color, a is the intensity
+    color_intensity: vec4<f32>,
+    // x is the cosine of the inner angle, the rest is padding
+    cos_inner: vec4<f32>,
+    view_projection: mat4x4<f32>,
+};
+
+// The camera, the sun, the lamps and the spots, written once per frame.
 struct Uniforms {
     view_projection: mat4x4<f32>,
     // xyz is the camera, w is unused padding
@@ -26,6 +42,9 @@ struct Uniforms {
     // x is how many of the lamps below are real, the rest is padding
     point_light_count: vec4<u32>,
     point_lights: array<PointLight, MAX_POINT_LIGHTS>,
+    // x is how many of the spots below are real
+    spot_light_count: vec4<u32>,
+    spot_lights: array<SpotLight, MAX_SPOT_LIGHTS>,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -37,6 +56,8 @@ struct Uniforms {
 // What the light can see, per spec 0015.
 @group(2) @binding(0) var shadow_map: texture_depth_2d;
 @group(2) @binding(1) var shadow_sampler: sampler_comparison;
+// one layer per spot, per spec 0021
+@group(2) @binding(2) var spot_shadow_maps: texture_depth_2d_array;
 
 const MIN_BIAS: f32 = 0.0005;
 const MAX_BIAS: f32 = 0.004;
@@ -111,6 +132,109 @@ fn vs_main(
     return out;
 }
 
+// How much of a spot reaches a point, from its own shadow layer. The same
+// comparison the sun gets, against a different map. Outside the map is lit, not
+// dark: wrong in the forgiving direction, per spec 0021.
+fn spot_shadow(
+    spot: SpotLight,
+    layer: u32,
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_light: vec3<f32>,
+) -> f32 {
+    let clip = spot.view_projection * vec4<f32>(world_position, 1.0);
+    if clip.w <= 0.0 {
+        return 1.0;
+    }
+
+    let ndc = clip.xyz / clip.w;
+    if abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 || ndc.z < 0.0 || ndc.z > 1.0 {
+        return 1.0;
+    }
+
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, ndc.y * -0.5 + 0.5);
+    let facing = clamp(dot(normal, to_light), 0.0, 1.0);
+    let bias = MIN_BIAS + MAX_BIAS * (1.0 - facing);
+
+    let texel = 1.0 / f32(textureDimensions(spot_shadow_maps).x);
+    var lit = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel;
+            lit += textureSampleCompare(
+                spot_shadow_maps,
+                shadow_sampler,
+                uv + offset,
+                layer,
+                ndc.z - bias,
+            );
+        }
+    }
+
+    return lit / 9.0;
+}
+
+// What one spot adds, matching SpotLight::shade in src/lighting.rs. Keep the
+// two in step. Unlike a lamp, a spot casts, so its own shadow dims it.
+fn spot_light(
+    spot: SpotLight,
+    layer: u32,
+    world_position: vec3<f32>,
+    normal: vec3<f32>,
+    to_viewer: vec3<f32>,
+    base: vec3<f32>,
+    shininess: f32,
+) -> vec3<f32> {
+    let range = spot.position_range.w;
+    if range <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    let offset = spot.position_range.xyz - world_position;
+    let distance = length(offset);
+    let left = 1.0 - clamp(distance / range, 0.0, 1.0);
+    let faded = left * left;
+    if faded <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    // the cone, smooth between the inner and outer angles
+    let facing = normalize(spot.direction_cos_outer.xyz);
+    let toward = normalize(-offset);
+    let cos_outer = spot.direction_cos_outer.w;
+    let cos_inner = spot.cos_inner.x;
+    let width = cos_inner - cos_outer;
+    let cosine = dot(facing, toward);
+
+    var cone = 0.0;
+    if width <= 0.0 {
+        cone = select(0.0, 1.0, cosine >= cos_inner);
+    } else {
+        let along = clamp((cosine - cos_outer) / width, 0.0, 1.0);
+        cone = along * along * (3.0 - 2.0 * along);
+    }
+    if cone <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    let to_light = normalize(offset);
+    let lambert = max(dot(normal, to_light), 0.0);
+    if lambert <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    let reaching = spot_shadow(spot, layer, world_position, normal, to_light);
+    if reaching <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+
+    let light = spot.color_intensity.rgb * spot.color_intensity.a * faded * cone * reaching;
+    let half_vector = normalize(to_light + to_viewer);
+    let specular = light * pow(max(dot(normal, half_vector), 0.0), max(shininess, 1.0));
+
+    return base * light * lambert + specular;
+}
+
 // What one lamp adds, matching PointLight::shade in src/lighting.rs. Keep the
 // two in step.
 //
@@ -183,6 +307,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     for (var index = 0u; index < lamps; index++) {
         shaded += point_light(
             uniforms.point_lights[index],
+            in.world_position,
+            normal,
+            to_viewer,
+            base.rgb,
+            in.shininess,
+        );
+    }
+
+    // and the spots, which do cast, so each carries its own shadow
+    let spots = min(uniforms.spot_light_count.x, MAX_SPOT_LIGHTS);
+    for (var index = 0u; index < spots; index++) {
+        shaded += spot_light(
+            uniforms.spot_lights[index],
+            index,
             in.world_position,
             normal,
             to_viewer,

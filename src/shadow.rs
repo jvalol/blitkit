@@ -64,6 +64,48 @@ pub fn light_view_projection(direction: Vec3, bounds: &Aabb) -> Mat4 {
     glam::camera::rh::proj::directx::orthographic(min.x, max.x, min.y, max.y, near, far) * view
 }
 
+/// How wide a spot's shadow map is. Smaller than the sun's, because a cone
+/// covers less ground than a sunrise does, and there can be four of them.
+/// See spec 0021.
+pub const SPOT_MAP_SIZE: u32 = 1024;
+
+/// How close to a spot the map starts. Anything nearer than this is not
+/// recorded, which keeps the depth range from being spent on the first
+/// centimetre in front of the bulb.
+pub const SPOT_NEAR: f32 = 0.1;
+
+/// One matrix taking a world position into a spot's clip space.
+///
+/// A cone has a direction and an angle, so this is an ordinary perspective
+/// view: the field of view is the whole cone, widened a little so the soft edge
+/// is inside the map rather than clipped by it. Unlike the sun's, this one has
+/// a place to look from.
+pub fn spot_view_projection(position: Vec3, direction: Vec3, outer: f32, range: f32) -> Mat4 {
+    let direction = direction.normalize_or_zero();
+    let direction = if direction.length_squared() < 0.5 {
+        Vec3::NEG_Y
+    } else {
+        direction
+    };
+
+    // straight down would make the usual up vector useless, the same way the
+    // sun's does
+    let up = if direction.dot(Vec3::Y).abs() > 0.99 {
+        Vec3::Z
+    } else {
+        Vec3::Y
+    };
+
+    let view = glam::camera::rh::view::look_at_mat4(position, position + direction, up);
+
+    // twice the half angle is the whole cone, and a tenth more so the edge of
+    // the light is not sitting on the edge of the map
+    let fov = (outer * 2.2).clamp(0.05, std::f32::consts::PI * 0.98);
+    let far = range.max(SPOT_NEAR * 2.0);
+
+    glam::camera::rh::proj::directx::perspective(fov, 1.0, SPOT_NEAR, far) * view
+}
+
 fn corners(bounds: &Aabb) -> [Vec3; 8] {
     let (min, max) = (bounds.min, bounds.max);
     [
@@ -114,6 +156,64 @@ pub fn is_lit(recorded_depth: f32, fragment_depth: f32, bias: f32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spot_projection_covers_its_cone() {
+        let at = Vec3::new(0.0, 4.0, 0.0);
+        let outer = 30f32.to_radians();
+        let range = 12.0;
+        let matrix = spot_view_projection(at, -Vec3::Y, outer, range);
+
+        // straight down the middle, partway along, lands in the map
+        let middle = at - Vec3::Y * 6.0;
+        assert!(map_position(matrix, middle).is_some(), "its own axis is off the map");
+
+        // and so does the rim of the cone, which is what the widened field of
+        // view is for: the soft edge has to be recorded, not clipped
+        let reach = 6.0 * outer.tan();
+        for (x, z) in [(reach, 0.0), (-reach, 0.0), (0.0, reach), (0.0, -reach)] {
+            let rim = at + Vec3::new(x, -6.0, z);
+            assert!(
+                map_position(matrix, rim).is_some(),
+                "the rim at {:?} fell off the map",
+                rim
+            );
+        }
+
+        // behind the spot is not in its map at all
+        assert!(map_position(matrix, at + Vec3::Y * 3.0).is_none());
+    }
+
+    #[test]
+    fn a_spot_projection_ends_at_its_range() {
+        let at = Vec3::Y * 4.0;
+        let matrix = spot_view_projection(at, -Vec3::Y, 30f32.to_radians(), 10.0);
+
+        assert!(map_position(matrix, at - Vec3::Y * 9.0).is_some());
+        // past the range there is nothing recorded, so nothing shadows
+        assert!(map_position(matrix, at - Vec3::Y * 11.0).is_none());
+    }
+
+    #[test]
+    fn a_spot_pointed_straight_down_still_has_an_up() {
+        // the usual up vector is useless when the cone points along it, the
+        // same trap the sun's matrix has
+        let matrix = spot_view_projection(Vec3::Y * 3.0, -Vec3::Y, 30f32.to_radians(), 8.0);
+        let below = map_position(matrix, Vec3::ZERO);
+
+        assert!(below.is_some(), "straight down produced nothing");
+        let (u, v, _) = below.expect("straight down is on the map");
+        assert!((u - 0.5).abs() < 1e-3 && (v - 0.5).abs() < 1e-3, "off centre at {} {}", u, v);
+    }
+
+    #[test]
+    fn a_spot_aimed_nowhere_falls_back_rather_than_producing_nonsense() {
+        let matrix = spot_view_projection(Vec3::Y * 3.0, Vec3::ZERO, 30f32.to_radians(), 8.0);
+
+        // aimed down, the same fallback the sun uses
+        assert!(map_position(matrix, Vec3::ZERO).is_some());
+        assert!(matrix.to_cols_array().iter().all(|v| v.is_finite()));
+    }
     use glam::vec3;
 
     fn light() -> Vec3 {
